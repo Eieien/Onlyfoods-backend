@@ -1,107 +1,103 @@
 from flask import Blueprint, request, jsonify, make_response, session
 from supabase_client import supabase
-from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity, set_access_cookies, unset_jwt_cookies
-from extensions import bcrypt
 auth_bp = Blueprint("/auth", __name__)
 
 @auth_bp.route("/register", methods=["POST"])
 def register():
-    data = request.json
-    email = data["email"].strip().lower()
-    password = data["password"]
+    # Check if already logged in
+    if session.get("user"):
+        return jsonify({"error": "Already logged in, please logout first"}), 400
 
-    if not email or not password:
-        return jsonify({"error": "Email and password are required"}), 400
+    data = request.json
+    email = data.get("email", "").strip().lower()
+    password = data.get("password", "")
+    username = data.get("username", "").strip()
+
+    if not email or not password or not username:
+        return jsonify({"error": "Email, password and username are required"}), 400
 
     if len(password) < 8:
         return jsonify({"error": "Password is too short"}), 400
 
-    email_exists = supabase.table("users").select("id").eq("email", email).maybe_single().execute()
+    # Check if email already exists in auth
+    try:
+        email_check = supabase.table("users").select("id").eq("email", email).maybe_single().execute()
+        if email_check.data:
+            return jsonify({"error": "Email already exists"}), 409
+    except Exception:
+        pass 
 
-    if email_exists:
-        return jsonify({"error": "Email already exists"}), 409
-    
-    # password_hash = bcrypt.generate_password_hash(password).decode("utf-8")
-    # response = supabase.table("users").insert({
-    #     "username": data["username"],
-    #     "email": email,
-    #     "password": password
-    # }).execute()
-    
-    # return jsonify({"new_user" : response.data, "message": "User registered successfully"}), 201
     try:
         res = supabase.auth.sign_up({
             "email": email,
             "password": password,
             "options": {
-                "data" : {"username": data["username"]}
+                "data": {"username": username}
             }
         })
 
-        # if res.user and res.user.identities == []:
-        #     return jsonify({"error": "Email already registered"}), 409
-
         if not res.user:
             return jsonify({"error": "Registration failed"}), 400
-        
+
+        # Supabase returns a user even if email is already registered
+        # but identities will be empty — catch duplicate this way
+        if res.user.identities is not None and len(res.user.identities) == 0:
+            return jsonify({"error": "Email already exists"}), 409
+
         return jsonify({
-            "message": "User Registered Successfully. Please check your email to confirm.",
+            "message": "User registered successfully. Please check your email to confirm.",
             "user": {"id": res.user.id, "email": res.user.email}
         }), 201
     except Exception as e:
-
         return jsonify({"error": str(e)}), 409
 
+
 @auth_bp.route("/login", methods=["POST"])
-# @jwt_required(optional=True) 
 def login():
+    if session.get("user"):
+        return jsonify({"error": "Already logged in, please logout first"}), 400
+
     data = request.json
-    email = data["email"].strip().lower()
-    password = data["password"]
-    # user_id = get_jwt_identity()
+    email = data.get("email", "").strip().lower()
+    password = data.get("password", "")
 
-    # if user_id:
-    #     return jsonify({"message": "User is already logged in"}), 303
+    if not email or not password:
+        return jsonify({"error": "Email and password are required"}), 400
 
-    # if not email or not password:
-    #     return jsonify({"error": "Email and password are required"}), 400
-    
-    # user = supabase.table("users").select("id,password").eq("email", email).maybe_single().execute()
-
-    # if not user or not bcrypt.check_password_hash(user.data["password"], password):
-    #     return jsonify({"error": "Invalid email or password"}), 409
-    
-    # access_token = create_access_token(identity=str(user.data["id"]))
-    # response =  jsonify({"message": "Logged in Successfully"})
-    # set_access_cookies(response, access_token)
-    
-    signed_in = session.get("user")
-    if signed_in:
-        return jsonify({"error": "User is already logged in"}), 401
-    
     try:
         res = supabase.auth.sign_in_with_password({
             "email": email,
             "password": password
         })
+
         user = res.user
-        session["user"] = {"id": user.id, "email": user.email, "metadata": user.user_metadata}
-        return jsonify({"message": "Login successful", "user": session["user"]}), 200
+        session["user"] = {
+            "id": user.id,
+            "email": user.email,
+            "metadata": user.user_metadata,
+            "access_token": res.session.access_token,   # store token
+            "refresh_token": res.session.refresh_token  # store refresh token
+        }
+        return jsonify({
+            "message": "Login successful",
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "metadata": user.user_metadata
+            },
+            "access_token": res.session.access_token,   # add this
+            "refresh_token": res.session.refresh_token  # add this
+        }), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 401
 
 
 @auth_bp.route("/logout", methods=["POST"])
-# @jwt_required(optional=True)
 def logout():
 
-    # user = get_jwt_identity()
-    
-    # if not user:
-    #     return jsonify({"message": "Already logged out"})
-
-    # response = jsonify({"message": "Logged out successfully"})
-    # unset_jwt_cookies(response)
+    user = session.get("user")
+    if not user:
+        return jsonify({"error": "User not logged in"}), 400
 
     supabase.auth.sign_out()
     session.clear()
@@ -109,9 +105,27 @@ def logout():
     return jsonify({"message": "Logged out"}), 200
 
 @auth_bp.route("/me", methods=["GET"])
-# @jwt_required()
 def getMe():
     user = session.get("user")
     if not user:
         return jsonify({"error": "Not authenticated"}), 401
-    return jsonify({"user": user}), 200
+    return jsonify({"user": user, "message": "User data retrieved successfully"}), 200
+
+def get_current_user():
+    # First try Authorization header (mobile)
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        access_token = auth_header.split(" ", 1)[1]
+        try:
+            res = supabase.auth.get_user(access_token)
+            if res and res.user:
+                return res.user.id, access_token, None
+        except Exception as e:
+            return None, None, (jsonify({"error": "Invalid or expired token", "details": str(e)}), 401)
+
+    # Fall back to session (web)
+    user = session.get("user")
+    if not user:
+        return None, None, (jsonify({"error": "Not authenticated"}), 401)
+
+    return user["id"], user["access_token"], None
