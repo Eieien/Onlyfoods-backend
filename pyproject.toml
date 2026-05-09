@@ -10,8 +10,11 @@ dependencies = [
     "flask-cors>=6.0.2",
     "flask-jwt-extended>=4.7.1",
     "marshmallow>=4.3.0",
+    "numpy>=2.4.4",
     "psycopg2>=2.9.11",
     "python-dotenv>=1.2.2",
+    "scikit-learn>=1.8.0",
     "sqlalchemy>=2.0.48",
     "supabase>=2.28.3",
+    "torch>=2.11.0",
 ]
