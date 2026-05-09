@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, request
 from flask import session
-from supabase_client import supabase
+from supabase_client import supabase, get_authenticated_client
 from schemas import ProfileSchema, ProfileUpdateSchema
 from .auth import get_current_user
 
@@ -68,12 +68,13 @@ def get_my_profile():
         "message": "Profile retrieved successfully"
     }
     """
-    user_id, err = get_current_user()
+    user_id, access_token, err = get_current_user()
     if err:
         return err
 
     try:
-        res = supabase.table("profiles").select("*").eq("id", user_id).execute()
+        client = get_authenticated_client(access_token)
+        res = client.table("profiles").select("*").eq("id", user_id).execute()
         if not res.data:
             return jsonify({"error": "Profile not found"}), 404
 
@@ -87,25 +88,7 @@ def get_my_profile():
 
 @profiles_bp.route("/me", methods=["PUT"])
 def update_my_profile():
-    """
-    PUT /api/profiles/me
-    Update the authenticated user's profile.
-
-    Auth Required: Yes (session)
-
-    Request body: (all optional)
-    {
-        "name": "str",
-        "avatar_url": "str"
-    }
-
-    Response (200):
-    {
-        "data": {updated profile object},
-        "message": "Profile updated successfully"
-    }
-    """
-    user_id, err = get_current_user()
+    user_id, access_token, err = get_current_user()
     if err:
         return err
 
@@ -119,7 +102,8 @@ def update_my_profile():
     validated_data = schema.load(data)
 
     try:
-        res = supabase.table("profiles").update(validated_data).eq("id", user_id).execute()
+        client = get_authenticated_client(access_token)
+        res = client.table("profiles").update(validated_data).eq("id", user_id).execute()
         if not res.data:
             return jsonify({"error": "Failed to update profile"}), 500
 
@@ -133,22 +117,7 @@ def update_my_profile():
 
 @profiles_bp.route("/me/avatar", methods=["POST"])
 def upload_avatar():
-    """
-    POST /api/profiles/me/avatar
-    Upload a profile avatar image.
-
-    Auth Required: Yes (session)
-
-    Form data:
-        file: image file (jpeg, png, webp, gif)
-
-    Response (200):
-    {
-        "data": { "avatar_url": "str" },
-        "message": "Avatar uploaded successfully"
-    }
-    """
-    user_id, err = get_current_user()
+    user_id, access_token, err = get_current_user()
     if err:
         return err
 
@@ -169,15 +138,17 @@ def upload_avatar():
     storage_path = f"avatars/{user_id}/{file.filename}"
 
     try:
+        client = get_authenticated_client(access_token)
+
         # Upload to Supabase Storage
-        supabase.storage.from_("avatars").upload(storage_path, file_bytes, {
+        client.storage.from_("avatars").upload(storage_path, file_bytes, {
             "content-type": file.content_type
         })
 
-        avatar_url = supabase.storage.from_("avatars").get_public_url(storage_path)
+        avatar_url = client.storage.from_("avatars").get_public_url(storage_path)
 
         # Update profile with new avatar URL
-        res = supabase.table("profiles").update({"avatar_url": avatar_url}).eq("id", user_id).execute()
+        res = client.table("profiles").update({"avatar_url": avatar_url}).eq("id", user_id).execute()
         if not res.data:
             return jsonify({"error": "Failed to update avatar"}), 500
 
