@@ -4,6 +4,7 @@ from supabase_client import supabase
 from schemas import ProfileSchema, ProfileUpdateSchema
 from utils.model import RecipeRecommender
 from .auth import get_current_user
+import os
 
 reccomendations_bp = Blueprint("reccomendations", __name__)
 
@@ -11,7 +12,7 @@ MODEL_PATH = "recipe_recommender.pkl"
 
 recommender = RecipeRecommender.load(MODEL_PATH) if os.path.exists(MODEL_PATH) else RecipeRecommender()
 
-@reccomendations_bp.route("/reccomendations/train", methods=["POST"])''
+@reccomendations_bp.route("/reccomendations/train", methods=["POST"])
 def train():
     """
     Body: { "recipes": [ <RecipeCreateSchema>, ... ] }
