@@ -32,9 +32,11 @@ def save_recipe(recipe_id):
             .insert({"user_id": user_id, "recipe_id": recipe_id})
             .execute()
         )
-
         if not res.data:
             return jsonify({"error": "Failed to save recipe"}), 500
+
+        # Increment favorites_count
+        supabase.rpc("increment_favorites", {"recipe_id": recipe_id}).execute()
 
         return jsonify({
             "data": res.data[0],
@@ -63,6 +65,9 @@ def unsave_recipe(recipe_id):
     try:
         client = get_authenticated_client(access_token)
         client.table("saved_recipes").delete().eq("user_id", user_id).eq("recipe_id", recipe_id).execute()
+
+        # Decrement favorites_count (floor at 0)
+        supabase.rpc("decrement_favorites", {"recipe_id": recipe_id}).execute()
 
         return jsonify({"message": "Recipe unsaved successfully"}), 200
     except Exception as e:

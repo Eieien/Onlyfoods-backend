@@ -1,152 +1,326 @@
-import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.preprocessing import MinMaxScaler, LabelEncoder
-from sklearn.neighbors import NearestNeighbors
-from scipy.sparse import hstack, csr_matrix
+import random
 import pickle
+import numpy as np
+import torch
+import torch.nn as nn
+from sklearn.neighbors import NearestNeighbors
+from sklearn.preprocessing import MinMaxScaler
+
+
+# ── PyTorch Embedding Model ──────────────────────────────────────────────────
+
+class RecipeEmbeddingModel(nn.Module):
+    def __init__(self, vocab_size, cuisine_count, embedding_dim=64):
+        super().__init__()
+
+        # Replaces TF-IDF — learns which ingredients matter together
+        self.ingredient_embedding = nn.EmbeddingBag(
+            vocab_size, embedding_dim, mode="mean", padding_idx=0
+        )
+
+        # Replaces LabelEncoder — learns cuisine relationships
+        self.cuisine_embedding = nn.Embedding(cuisine_count, 16, padding_idx=0)
+
+        # Numeric: cook_time, servings, favorites_count
+        self.numeric_layer = nn.Sequential(
+            nn.Linear(3, 16),
+            nn.ReLU()
+        )
+
+        # Fuse all features into one compact recipe vector
+        self.fusion = nn.Sequential(
+            nn.Linear(embedding_dim + 16 + 16, 128),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(128, 64)  # final vector fed into KNN
+        )
+
+    def forward(self, ingredient_ids, cuisine_id, numerics):
+        ing_emb = self.ingredient_embedding(ingredient_ids)
+        cui_emb = self.cuisine_embedding(cuisine_id).squeeze(1)
+        num_emb = self.numeric_layer(numerics)
+        fused   = torch.cat([ing_emb, cui_emb, num_emb], dim=-1)
+        return self.fusion(fused)
+
+
+# ── Swipe Loss (Triplet) ─────────────────────────────────────────────────────
+
+class SwipeLoss(nn.Module):
+    def __init__(self, margin=0.5):
+        super().__init__()
+        self.loss = nn.TripletMarginLoss(margin=margin, p=2)
+
+    def forward(self, anchor, positive, negative):
+        return self.loss(anchor, positive, negative)
+
+
+# ── Main Recommender ─────────────────────────────────────────────────────────
 
 class RecipeRecommender:
     def __init__(self):
-        self.tfidf_ingredients = TfidfVectorizer()
-        self.tfidf_description = TfidfVectorizer(max_features=100)
-        self.scaler = MinMaxScaler()
-        self.cuisine_encoder = LabelEncoder()
-        self.difficulty_encoder = LabelEncoder()
-        self.knn = NearestNeighbors(n_neighbors=10, metric='cosine')
-        self.recipes = []       # store raw recipe dicts
-        self.fitted = False
+        self.embedding_model = None
+        self.knn             = NearestNeighbors(n_neighbors=10, metric='cosine')
+        self.scaler          = MinMaxScaler()
 
+        # Vocab built at fit time
+        self.vocab       = {}   # ingredient word → index
+        self.cuisine_map = {}   # cuisine string   → index
 
-    def _build_features(self, recipes, fit=False):
-        """
-        Turn recipe dicts into a single feature matrix.
-        fit=True during training, fit=False during inference.
-        """
+        self.recipes = []
+        self.fitted  = False
 
-        ingredient_texts = [" ".join(r["ingredients"]) for r in recipes]
+        # Per-user seen tracking: { user_id: set of recipe titles }
+        self._seen_store: dict = {}
 
-        descriptions = [r.get("description", "") for r in recipes]
+    # ── Encoding helpers ─────────────────────────────────────────────────────
 
-        numeric = np.array([[
-            r["prep_time_minutes"],
-            r["cook_time_minutes"],
-            r["prep_time_minutes"] + r["cook_time_minutes"],  # total time
-            r["servings"]
-        ] for r in recipes], dtype=float)
+    def _encode_recipe(self, recipe):
+        """Convert one recipe dict into three tensors."""
+        ing_ids = [self.vocab.get(w.lower(), 0) for w in recipe["ingredients"]]
+        if not ing_ids:
+            ing_ids = [0]
 
-        cuisines    = [r["cuisine_type"].lower() for r in recipes]
-        difficulties = [r["difficulty"].lower() for r in recipes]
+        ing_tensor     = torch.tensor([ing_ids], dtype=torch.long)
+        cuisine_tensor = torch.tensor(
+            [self.cuisine_map.get(recipe["cuisine_type"].lower(), 0)],
+            dtype=torch.long
+        )
+        numeric_tensor = torch.tensor([[
+            recipe.get("cook_time_minutes", 0),
+            recipe.get("servings", 1),
+            recipe.get("favorites_count", 0),
+        ]], dtype=torch.float)
 
-        if fit:
-            ing_matrix   = self.tfidf_ingredients.fit_transform(ingredient_texts)
-            desc_matrix  = self.tfidf_description.fit_transform(descriptions)
-            numeric_scaled = self.scaler.fit_transform(numeric)
+        return ing_tensor, cuisine_tensor, numeric_tensor
 
-            self.cuisine_encoder.fit(cuisines + ["unknown"])
-            self.difficulty_encoder.fit(difficulties + ["unknown"])
-        else:
-            ing_matrix     = self.tfidf_ingredients.transform(ingredient_texts)
-            desc_matrix    = self.tfidf_description.transform(descriptions)
-            numeric_scaled = self.scaler.transform(numeric)
+    def _build_features(self, recipes):
+        """Run recipes through embedding model → numpy matrix for KNN."""
+        self.embedding_model.eval()
+        vectors = []
+        with torch.no_grad():
+            for r in recipes:
+                ing, cui, num = self._encode_recipe(r)
+                vec = self.embedding_model(ing, cui, num)
+                vectors.append(vec.squeeze().numpy())
+        return np.array(vectors)
 
-        cuisine_encoded    = self.cuisine_encoder.transform(
-            [c if c in self.cuisine_encoder.classes_ else "unknown" for c in cuisines]
-        ).reshape(-1, 1)
-        difficulty_encoded = self.difficulty_encoder.transform(
-            [d if d in self.difficulty_encoder.classes_ else "unknown" for d in difficulties]
-        ).reshape(-1, 1)
-
-        weighted_ingredients = ing_matrix * 2
-
-        feature_matrix = hstack([
-            weighted_ingredients,              
-            desc_matrix,                        
-            csr_matrix(numeric_scaled),         
-            csr_matrix(cuisine_encoded),        
-            csr_matrix(difficulty_encoded),     
-        ])
-
-        return feature_matrix
-
+    # ── Fit ──────────────────────────────────────────────────────────────────
 
     def fit(self, recipes: list[dict]):
-        """
-        recipes: list of recipe dicts matching RecipeCreateSchema
-        """
         published = [r for r in recipes if r.get("is_published", True)]
         if len(published) < 2:
             raise ValueError("Need at least 2 published recipes to fit")
 
+        # Build ingredient vocab
+        all_words  = [w.lower() for r in published for w in r["ingredients"]]
+        self.vocab = {w: i + 1 for i, w in enumerate(set(all_words))}  # 0 = padding
+
+        # Build cuisine map
+        cuisines        = list(set(r["cuisine_type"].lower() for r in published))
+        self.cuisine_map = {c: i + 1 for i, c in enumerate(cuisines)}  # 0 = padding
+
+        # Init embedding model
+        self.embedding_model = RecipeEmbeddingModel(
+            vocab_size    = len(self.vocab) + 1,
+            cuisine_count = len(self.cuisine_map) + 1,
+        )
+
         self.recipes = published
-        feature_matrix = self._build_features(published, fit=True)
+        feature_matrix = self._build_features(published)
         self.knn.fit(feature_matrix)
         self.fitted = True
-        print(f"Fitted on {len(published)} recipes, "
-              f"feature dim: {feature_matrix.shape[1]}")
+        print(f"[RecipeRecommender] Fitted on {len(published)} recipes, "
+              f"embedding dim: {feature_matrix.shape[1]}")
 
+    # ── Fine-tune on swipes ──────────────────────────────────────────────────
 
-    def recommend_by_index(self, recipe_index: int, n: int = 5) -> list[dict]:
-        """Find recipes similar to recipes[recipe_index]"""
+    def fine_tune_on_swipes(self, swipe_history: list[dict], epochs=5, lr=1e-3):
+        """
+        swipe_history: list of:
+          { "anchor": <recipe>, "liked": <recipe>, "disliked": <recipe> }
+        Pulls liked recipes closer to anchor, pushes disliked ones away.
+        Re-indexes KNN after training so recommendations update immediately.
+        """
+        if not self.fitted:
+            raise RuntimeError("Call fit() first")
+        if len(swipe_history) < 3:
+            raise ValueError("Need at least 3 swipe triplets to fine-tune")
+
+        optimizer = torch.optim.Adam(self.embedding_model.parameters(), lr=lr)
+        loss_fn   = SwipeLoss()
+
+        self.embedding_model.train()
+        for epoch in range(epochs):
+            total_loss = 0.0
+            for entry in swipe_history:
+                anchor_vec   = self.embedding_model(*self._encode_recipe(entry["anchor"]))
+                positive_vec = self.embedding_model(*self._encode_recipe(entry["liked"]))
+                negative_vec = self.embedding_model(*self._encode_recipe(entry["disliked"]))
+
+                loss = loss_fn(anchor_vec, positive_vec, negative_vec)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                total_loss += loss.item()
+
+            print(f"[fine_tune] Epoch {epoch + 1}/{epochs}  loss: {total_loss:.4f}")
+
+        # Re-index KNN with updated embeddings so next recommend() reflects learning
+        feature_matrix = self._build_features(self.recipes)
+        self.knn.fit(feature_matrix)
+        print("[fine_tune] KNN re-indexed.")
+
+    # ── Recommend by recipe ──────────────────────────────────────────────────
+
+    def recommend_by_recipe(
+        self,
+        recipe: dict,
+        n: int = 5,
+        user_id: str = None,
+        diversity: float = 0.3,
+    ) -> list[dict]:
+        """
+        Returns n recommendations for a given recipe.
+        - Skips recipes the user has already seen (if user_id provided)
+        - Adds diversity so the same query doesn't always return identical results
+        """
         if not self.fitted:
             raise RuntimeError("Call fit() first")
 
-        feature_matrix = self._build_features(self.recipes, fit=False)
-        query_vec = feature_matrix[recipe_index]
+        seen = self._seen_store.get(user_id, set()) if user_id else set()
 
-        distances, indices = self.knn.kneighbors(query_vec, n_neighbors=n + 1)
+        # Fetch a large pool so we have room to filter + diversify
+        pool_size    = min(len(self.recipes), n * 4)
+        query_matrix = self._build_features([recipe])
+        distances, indices = self.knn.kneighbors(query_matrix, n_neighbors=pool_size)
 
-        results = []
+        candidates = []
         for dist, idx in zip(distances[0], indices[0]):
-            if idx == recipe_index:
-                continue    
-            results.append({
-                "recipe":     self.recipes[idx],
-                "similarity": round(1 - float(dist), 4)   
+            r = self.recipes[idx]
+            if r["title"] == recipe.get("title"):
+                continue                        # skip self
+            if r["title"] in seen:
+                continue                        # skip already seen
+            candidates.append({
+                "recipe":     r,
+                "similarity": round(1 - float(dist), 4),
             })
 
-        return results[:n]
+        # Diversify: keep top half by similarity, shuffle the rest
+        split      = max(1, int(len(candidates) * (1 - diversity)))
+        top_half   = candidates[:split]
+        rest       = candidates[split:]
+        random.shuffle(rest)
+        results    = (top_half + rest)[:n]
 
+        # Mark shown
+        if user_id:
+            seen.update(r["recipe"]["title"] for r in results)
+            self._seen_store[user_id] = seen
 
-    def recommend_by_recipe(self, recipe: dict, n: int = 5) -> list[dict]:
-        """Find recipes similar to an arbitrary recipe dict"""
+        return results
+
+    # ── Recommend by index ───────────────────────────────────────────────────
+
+    def recommend_by_index(
+        self,
+        recipe_index: int,
+        n: int = 5,
+        user_id: str = None,
+    ) -> list[dict]:
         if not self.fitted:
             raise RuntimeError("Call fit() first")
 
-        query_matrix = self._build_features([recipe], fit=False)
-        distances, indices = self.knn.kneighbors(query_matrix, n_neighbors=n)
+        recipe = self.recipes[recipe_index]
+        return self.recommend_by_recipe(recipe, n=n, user_id=user_id)
 
-        return [{
-            "recipe":     self.recipes[idx],
-            "similarity": round(1 - float(dist), 4)
-        } for dist, idx in zip(distances[0], indices[0])]
-
+    # ── Recommend by filters ─────────────────────────────────────────────────
 
     def recommend_by_filters(
         self,
         cuisine_type: str = None,
-        difficulty: str = None,
-        max_total_time: int = None,
-        n: int = 5
+        max_cook_time: int = None,
+        n: int = 5,
+        user_id: str = None,
     ) -> list[dict]:
-        """
-        Returns top recipes matching given filters,
-        ranked by how well they match each other (cluster quality).
-        """
+        seen       = self._seen_store.get(user_id, set()) if user_id else set()
         candidates = self.recipes
 
         if cuisine_type:
             candidates = [r for r in candidates
                           if r["cuisine_type"].lower() == cuisine_type.lower()]
-        if difficulty:
+        if max_cook_time:
             candidates = [r for r in candidates
-                          if r["difficulty"].lower() == difficulty.lower()]
-        if max_total_time:
-            candidates = [r for r in candidates
-                          if r["prep_time_minutes"] + r["cook_time_minutes"] <= max_total_time]
+                          if r["cook_time_minutes"] <= max_cook_time]
 
-        candidates.sort(key=lambda r: r["prep_time_minutes"] + r["cook_time_minutes"])
-        return [{"recipe": r, "similarity": None} for r in candidates[:n]]
+        # Exclude seen, sort by favorites descending
+        candidates = [r for r in candidates if r["title"] not in seen]
+        candidates.sort(key=lambda r: r.get("favorites_count", 0), reverse=True)
 
+        results = [{"recipe": r, "similarity": None} for r in candidates[:n]]
+
+        if user_id:
+            seen.update(r["recipe"]["title"] for r in results)
+            self._seen_store[user_id] = seen
+
+        return results
+
+    # ── Personalized (centroid of liked recipes) ─────────────────────────────
+
+    def recommend_personalized(
+        self,
+        liked_recipes: list[dict],
+        disliked_titles: list[str] = None,
+        n: int = 5,
+        user_id: str = None,
+    ) -> list[dict]:
+        if not self.fitted:
+            raise RuntimeError("Call fit() first")
+
+        disliked_titles = set(disliked_titles or [])
+        seen            = self._seen_store.get(user_id, set()) if user_id else set()
+
+        if not liked_recipes:
+            return self.recommend_by_filters(n=n, user_id=user_id)
+
+        # Average embeddings of liked recipes → taste centroid
+        self.embedding_model.eval()
+        with torch.no_grad():
+            vecs     = [self.embedding_model(*self._encode_recipe(r)) for r in liked_recipes]
+            centroid = torch.stack(vecs).mean(dim=0).numpy()
+
+        distances, indices = self.knn.kneighbors(
+            centroid.reshape(1, -1),
+            n_neighbors=min(len(self.recipes), n * 4)
+        )
+
+        liked_titles = {r["title"] for r in liked_recipes}
+        excluded     = liked_titles | disliked_titles | seen
+
+        results = []
+        for dist, idx in zip(distances[0], indices[0]):
+            r = self.recipes[idx]
+            if r["title"] in excluded:
+                continue
+            results.append({
+                "recipe":     r,
+                "similarity": round(1 - float(dist), 4),
+            })
+            if len(results) >= n:
+                break
+
+        if user_id:
+            seen.update(r["recipe"]["title"] for r in results)
+            self._seen_store[user_id] = seen
+
+        return results
+
+    # ── Reset seen for a user ────────────────────────────────────────────────
+
+    def reset_seen(self, user_id: str):
+        self._seen_store.pop(user_id, None)
+
+    # ── Persist ──────────────────────────────────────────────────────────────
 
     def save(self, path="recipe_recommender.pkl"):
         with open(path, "wb") as f:

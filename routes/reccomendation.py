@@ -1,13 +1,13 @@
 """
 routes/recommendations.py
 
-Fixed version of the recommendations blueprint.
-Changes vs original:
-  - Fixed duplicate route function name (recommend_by_filters)
-  - Fixed all typos: reccomendations → recommendations, reccomend → recommend
-  - Added  POST /recommendations/swipe          (record a swipe)
-  - Added  POST /recommendations/personalized   (swipe-history-driven recs)
-  - Added  auth guard on /train
+Changes in this version:
+  - PyTorch embedding model replaces TF-IDF (via updated model.py)
+  - user_id passed to recommend methods → seen tracking (no repeated results)
+  - Diversity built into recommend_by_recipe (top results kept, rest shuffled)
+  - POST /recommendations/fine-tune  → fine-tunes model on swipe triplets
+  - POST /recommendations/reset-seen → clears seen history for a user
+  - /personalized uses model's recommend_personalized() directly
 """
 
 from flask import Blueprint, jsonify, request
@@ -24,20 +24,20 @@ recommender = (
     else RecipeRecommender()
 )
 
-# In-memory swipe store – replace with your Supabase table in production
+# In-memory swipe store
 # Structure: { user_id: { "liked": [...recipes], "disliked": [...titles] } }
 _swipe_store: dict = {}
 
 
-# ── /recommendations/train ──────────────────────────────────────────────────
+# ── /train ───────────────────────────────────────────────────────────────────
 
-@recommendations_bp.route("/recommendations/train", methods=["POST"])
+@recommendations_bp.route("/train", methods=["POST"])
 def train():
     """
-    Admin-only. Body: { "recipes": [ <RecipeCreateSchema>, ... ] }
-    Retrains the model and persists it to disk.
+    Body: { "recipes": [ <RecipeCreateSchema>, ... ] }
+    Retrains the embedding model + KNN from scratch.
     """
-    # ⚠️  Uncomment once you wire up admin auth:
+    # Uncomment once admin auth is wired:
     # user = get_current_user()
     # if not user or user.get("role") != "admin":
     #     return jsonify({"error": "forbidden"}), 403
@@ -54,87 +54,119 @@ def train():
         return jsonify({"error": str(e)}), 500
 
 
-# ── /recommendations/recommend ──────────────────────────────────────────────
+# ── /fine-tune ───────────────────────────────────────────────────────────────
 
-@recommendations_bp.route("/recommendations/recommend", methods=["POST"])
+@recommendations_bp.route("/fine-tune", methods=["POST"])
+def fine_tune():
+    """
+    Fine-tunes the embedding model on swipe triplets so recommendations
+    evolve based on user behavior without full retraining.
+
+    Body: {
+        "swipe_history": [
+            { "anchor": <recipe>, "liked": <recipe>, "disliked": <recipe> },
+            ...
+        ],
+        "epochs": 5   // optional, default 5
+    }
+    Call this nightly or after every 50 swipes accumulate.
+    """
+    data          = request.get_json() or {}
+    swipe_history = data.get("swipe_history", [])
+    epochs        = data.get("epochs", 5)
+
+    if len(swipe_history) < 3:
+        return jsonify({"error": "Need at least 3 swipe triplets to fine-tune"}), 400
+
+    try:
+        recommender.fine_tune_on_swipes(swipe_history, epochs=epochs)
+        recommender.save(MODEL_PATH)
+        return jsonify({"status": "ok", "fine_tuned_on": len(swipe_history)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ── /recommend ───────────────────────────────────────────────────────────────
+
+@recommendations_bp.route("/recommend", methods=["POST"])
 def recommend_by_recipe():
     """
-    Body: { "recipe": <RecipeCreateSchema>, "n": 5 }
-    Returns recipes similar to the submitted recipe dict.
-    Used for the "you might also like" panel.
+    Body: { "recipe": <RecipeCreateSchema>, "n": 5, "user_id": "optional" }
+    Returns diverse, non-repeated recommendations similar to the given recipe.
+    Pass user_id to enable seen tracking across calls.
     """
     data = request.get_json()
     if not data or "recipe" not in data:
         return jsonify({"error": "recipe field required"}), 400
 
-    n = data.get("n", 5)
+    n       = data.get("n", 5)
+    user_id = data.get("user_id")
+
     try:
-        results = recommender.recommend_by_recipe(data["recipe"], n=n)
-        return jsonify({"recommendations": results})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-# ── /recommendations/filter ─────────────────────────────────────────────────
-
-@recommendations_bp.route("/recommendations/filter", methods=["GET"])
-def recommend_by_filters():
-    """
-    Query params: cuisine_type, difficulty, max_total_time, n
-    e.g. /recommendations/filter?cuisine_type=italian&difficulty=easy&max_total_time=30
-    Used for cold-start (new users with no swipe history).
-    """
-    try:
-        results = recommender.recommend_by_filters(
-            cuisine_type=request.args.get("cuisine_type"),
-            difficulty=request.args.get("difficulty"),
-            max_total_time=request.args.get("max_total_time", type=int),
-            n=request.args.get("n", default=5, type=int),
+        results = recommender.recommend_by_recipe(
+            data["recipe"], n=n, user_id=user_id
         )
         return jsonify({"recommendations": results})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-# ── /recipes/<index>/similar ────────────────────────────────────────────────
+# ── /filter ──────────────────────────────────────────────────────────────────
 
-@recommendations_bp.route("/recipes/<int:index>/similar", methods=["GET"])
-def recommend_by_index(index):
+@recommendations_bp.route("/filter", methods=["GET"])
+def recommend_by_filters():
     """
-    Returns recipes similar to the recipe at position `index` in training data.
-    Useful for a "more like this" button on a recipe detail page.
+    Query params: cuisine_type, max_cook_time, n, user_id
+    Used for cold-start (new users with no swipe history).
+    Excludes already-seen recipes if user_id is passed.
     """
-    n = request.args.get("n", default=5, type=int)
     try:
-        results = recommender.recommend_by_index(index, n=n)
+        results = recommender.recommend_by_filters(
+            cuisine_type  = request.args.get("cuisine_type"),
+            max_cook_time = request.args.get("max_cook_time", type=int),
+            n             = request.args.get("n", default=5, type=int),
+            user_id       = request.args.get("user_id"),
+        )
         return jsonify({"recommendations": results})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-# ── /recommendations/swipe  (NEW) ───────────────────────────────────────────
+# ── /similar/<index> ─────────────────────────────────────────────────────────
 
-@recommendations_bp.route("/recommendations/swipe", methods=["POST"])
+@recommendations_bp.route("/similar/<int:index>", methods=["GET"])
+def recommend_by_index(index):
+    """
+    Returns recipes similar to the recipe at position `index` in training data.
+    Query params: n, user_id
+    """
+    n       = request.args.get("n", default=5, type=int)
+    user_id = request.args.get("user_id")
+    try:
+        results = recommender.recommend_by_index(index, n=n, user_id=user_id)
+        return jsonify({"recommendations": results})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ── /swipe ───────────────────────────────────────────────────────────────────
+
+@recommendations_bp.route("/swipe", methods=["POST"])
 def record_swipe():
     """
     Records a swipe for the current user.
-    Body: { "recipe": <RecipeCreateSchema>, "direction": "like" | "dislike" }
-
-    In production, persist to a `swipes` table in Supabase instead of the
-    in-memory _swipe_store dict.
-
-    Supabase table suggestion:
-        swipes (id, user_id, recipe_title, direction, created_at)
+    Body: { "user_id": "...", "recipe": <RecipeCreateSchema>, "direction": "like"|"dislike" }
     """
+    # Uncomment once auth is wired:
     # user = get_current_user()
     # if not user:
     #     return jsonify({"error": "unauthorized"}), 401
     # user_id = user["id"]
-    user_id = request.get_json().get("user_id", "anon")   # remove once auth is wired
 
-    data = request.get_json()
+    data      = request.get_json()
+    user_id   = data.get("user_id", "anon")
     recipe    = data.get("recipe")
-    direction = data.get("direction")   # "like" | "dislike"
+    direction = data.get("direction")
 
     if not recipe or direction not in ("like", "dislike"):
         return jsonify({"error": "recipe and direction ('like'|'dislike') required"}), 400
@@ -142,7 +174,6 @@ def record_swipe():
     store = _swipe_store.setdefault(user_id, {"liked": [], "disliked": []})
 
     if direction == "like":
-        # avoid duplicates
         titles = [r["title"] for r in store["liked"]]
         if recipe["title"] not in titles:
             store["liked"].append(recipe)
@@ -153,77 +184,63 @@ def record_swipe():
     return jsonify({"status": "recorded", "direction": direction})
 
 
-# ── /recommendations/personalized  (NEW) ────────────────────────────────────
+# ── /personalized ────────────────────────────────────────────────────────────
 
-@recommendations_bp.route("/recommendations/personalized", methods=["POST"])
+@recommendations_bp.route("/personalized", methods=["POST"])
 def recommend_personalized():
     """
-    Builds a user taste profile by averaging the feature vectors of liked
-    recipes, then queries KNN for the nearest neighbours.
+    Builds a taste centroid from liked recipes using the embedding model,
+    then queries KNN — much more accurate than the old sparse matrix centroid.
 
-    Body (option A – pass liked recipes directly, good for testing):
-        {
-            "liked_recipes":   [ <RecipeCreateSchema>, ... ],
-            "disliked_titles": [ "Recipe Title", ... ],   // excluded from results
-            "n": 5
-        }
+    Body (option A — pass recipes directly):
+        { "liked_recipes": [...], "disliked_titles": [...], "n": 5, "user_id": "..." }
 
-    Body (option B – look up from swipe store by user_id):
+    Body (option B — look up from swipe store):
         { "user_id": "user_123", "n": 5 }
-
-    The model's recommend_by_recipe() already handles a single-recipe query;
-    for a taste profile we average the feature vectors of all liked recipes
-    so the KNN query represents the user's centroid in embedding space.
     """
     if not recommender.fitted:
         return jsonify({"error": "model not trained yet"}), 503
 
-    data = request.get_json() or {}
-    n    = data.get("n", 5)
+    data    = request.get_json() or {}
+    n       = data.get("n", 5)
+    user_id = data.get("user_id")
 
-    # ── resolve liked / disliked lists ──
-    if "user_id" in data:
-        user_id = data["user_id"]
-        store   = _swipe_store.get(user_id, {"liked": [], "disliked": []})
-        liked_recipes  = store["liked"]
+    # Resolve liked / disliked
+    if user_id and "liked_recipes" not in data:
+        store           = _swipe_store.get(user_id, {"liked": [], "disliked": []})
+        liked_recipes   = store["liked"]
         disliked_titles = store["disliked"]
     else:
         liked_recipes   = data.get("liked_recipes", [])
         disliked_titles = data.get("disliked_titles", [])
 
-    # ── cold start: no likes yet ──
-    if not liked_recipes:
-        results = recommender.recommend_by_filters(n=n)
-        return jsonify({"recommendations": results, "mode": "cold_start"})
+    try:
+        results = recommender.recommend_personalized(
+            liked_recipes   = liked_recipes,
+            disliked_titles = disliked_titles,
+            n               = n,
+            user_id         = user_id,
+        )
+        mode = "cold_start" if not liked_recipes else "personalized"
+        return jsonify({"recommendations": results, "mode": mode})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-    # ── build centroid of liked recipe feature vectors ──
-    import numpy as np
-    from scipy.sparse import vstack
 
-    liked_matrix = recommender._build_features(liked_recipes, fit=False)
-    # average across liked recipes → single query vector
-    centroid = liked_matrix.mean(axis=0)          # shape (1, n_features)
+# ── /reset-seen ──────────────────────────────────────────────────────────────
 
-    import scipy.sparse as sp
-    centroid_sparse = sp.csr_matrix(centroid)
+@recommendations_bp.route("/reset-seen", methods=["POST"])
+def reset_seen():
+    """
+    Clears the seen history for a user so they can get fresh recommendations.
+    Body: { "user_id": "..." }
+    Useful for testing or when a user explicitly wants to rediscover recipes.
+    """
+    data    = request.get_json() or {}
+    user_id = data.get("user_id")
 
-    distances, indices = recommender.knn.kneighbors(
-        centroid_sparse, n_neighbors=n + len(liked_recipes)
-    )
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
 
-    liked_titles = {r["title"] for r in liked_recipes}
-    excluded     = liked_titles | set(disliked_titles)
-
-    results = []
-    for dist, idx in zip(distances[0], indices[0]):
-        recipe = recommender.recipes[idx]
-        if recipe["title"] in excluded:
-            continue
-        results.append({
-            "recipe":     recipe,
-            "similarity": round(1 - float(dist), 4),
-        })
-        if len(results) >= n:
-            break
-
-    return jsonify({"recommendations": results, "mode": "personalized"})
+    recommender.reset_seen(user_id)
+    return jsonify({"status": "ok", "message": f"Seen history cleared for {user_id}"})

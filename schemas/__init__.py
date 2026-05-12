@@ -7,12 +7,10 @@ class RecipeCreateSchema(Schema):
     ingredients = fields.List(fields.Str(), required=True, validate=validate.Length(min=1))
     steps = fields.List(fields.Str(), required=True, validate=validate.Length(min=1))
     cuisine_type = fields.Str(required=True, validate=validate.Length(min=1, max=100))
-    difficulty = fields.Str(required=True, validate=validate.OneOf(["easy", "medium", "hard"]))
-    prep_time_minutes = fields.Int(required=True, validate=validate.Range(min=0))
     cook_time_minutes = fields.Int(required=True, validate=validate.Range(min=0))
     servings = fields.Int(required=True, validate=validate.Range(min=1))
     is_published = fields.Bool(load_default=False)
-
+    favorites_count = fields.Int(dump_only=True, load_default=0)  # read-only, set by DB
 
 class RecipeUpdateSchema(Schema):
     title = fields.Str(validate=validate.Length(min=1, max=255))
@@ -20,8 +18,6 @@ class RecipeUpdateSchema(Schema):
     ingredients = fields.List(fields.Str(), validate=validate.Length(min=1))
     steps = fields.List(fields.Str(), validate=validate.Length(min=1))
     cuisine_type = fields.Str(validate=validate.Length(min=1, max=100))
-    difficulty = fields.Str(validate=validate.OneOf(["easy", "medium", "hard"]))
-    prep_time_minutes = fields.Int(validate=validate.Range(min=0))
     cook_time_minutes = fields.Int(validate=validate.Range(min=0))
     servings = fields.Int(validate=validate.Range(min=1))
     is_published = fields.Bool()
