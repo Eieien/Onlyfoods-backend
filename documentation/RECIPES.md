@@ -1,319 +1,379 @@
-# Recipes API (Mobile)
+# Recipes API
 
-All endpoints are mounted under:
+## Overview
 
-- `{{API_BASE_URL}}/api/recipes/...`
+The recipes module handles all recipe CRUD operations, media uploads, and public recipe discovery.
 
-Authentication (mobile):
+**Base URL:** `/recipes`
 
-- `Authorization: Bearer <access_token>`
-
----
-
-## Endpoint summary
-
-| Method | Path                            | Description                           | Auth         |
-| ------ | ------------------------------- | ------------------------------------- | ------------ |
-| GET    | `/`                             | Get all published recipes             | No           |
-| POST   | `/create`                       | Create recipe (owner)                 | Yes (Bearer) |
-| GET    | `/get_all`                      | Get all recipes + media               | No           |
-| GET    | `/<recipe_id>`                  | Get recipe by id + media              | No           |
-| PUT    | `/update/<recipe_id>`           | Update recipe (owner)                 | Yes (Bearer) |
-| DELETE | `/<recipe_id>`                  | Delete recipe + media (owner)         | Yes (Bearer) |
-| POST   | `/<recipe_id>/media`            | Upload image/video for recipe (owner) | Yes (Bearer) |
-| DELETE | `/<recipe_id>/media/<media_id>` | Delete media (owner)                  | Yes (Bearer) |
-
----
-
-## Common error responses
-
-Typical shapes:
-
-```json
-{ "error": "Validation failed", "details": { ... } }
-```
-
-```json
-{ "error": "Forbidden" }
-```
-
-```json
-{ "error": "Database error", "details": "..." }
+**Registered in:** `routes/__init__.py`
+```python
+app.register_blueprint(recipes_bp, url_prefix="/recipes")
 ```
 
 ---
 
-## GET `/recipes/`
+## Recipe Schema
 
-### Purpose
+### Fields
 
-Get all recipes where `is_published = true`.
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `title` | string | ✅ | Recipe name (1–255 chars) |
+| `description` | string | ✅ | Short description (min 1 char) |
+| `ingredients` | string[] | ✅ | Non-empty list of ingredients |
+| `steps` | string[] | ✅ | Cooking steps in order |
+| `cuisine_type` | string | ✅ | e.g. `"Filipino"`, `"Italian"`, `"Japanese"` (1–100 chars) |
+| `cook_time_minutes` | int | ✅ | Cook time in minutes (>= 0) |
+| `servings` | int | ✅ | Number of servings (>= 1) |
+| `is_published` | bool | ❌ | Whether recipe is publicly visible (default: `false`) |
+| `favorites_count` | int | ❌ | Read-only — managed by DB, never sent by client |
 
-### Responses
-
-- `200` `{ "data": [ ... ], "message": "Recipes retrieved successfully" }`
-- `500` `{ "error": "Database error", "details": "..." }`
+> `favorites_count` is `dump_only` — it is returned in responses but ignored on create/update.
 
 ---
 
-## POST `/recipes/create`
+## Endpoints
 
-### Purpose
+---
 
-Create a recipe for the authenticated user.
+### GET `/recipes/`
 
-### Headers
+Get all published recipes. No authentication required.
 
-- `Content-Type: application/json`
-- `Authorization: Bearer <access_token>`
-
-### Request body
-
-Validated by `RecipeCreateSchema`:
-
+**Response `200`:**
 ```json
 {
-  "title": "string (required)",
-  "description": "string (required)",
-  "ingredients": ["string"],
-  "steps": ["string"],
-  "cuisine_type": "string (required)",
-  "difficulty": "easy | medium | hard",
-  "prep_time_minutes": 0,
-  "cook_time_minutes": 0,
-  "servings": 1,
-  "is_published": false
+  "data": [
+    {
+      "id": 1,
+      "title": "Chicken Adobo",
+      "description": "A classic Filipino braised chicken dish",
+      "ingredients": ["500g chicken", "1/2 cup soy sauce"],
+      "steps": ["Marinate chicken", "Brown chicken", "Simmer for 30 mins"],
+      "cuisine_type": "Filipino",
+      "cook_time_minutes": 30,
+      "servings": 4,
+      "is_published": true,
+      "favorites_count": 12,
+      "author_id": "uuid",
+      "created_at": "2026-05-12T..."
+    }
+  ],
+  "message": "Recipes retrieved successfully"
 }
 ```
 
-### Responses
-
-- `201` `{ "data": { ... }, "message": "Recipe created successfully" }`
-- `400` `{ "error": "Validation failed", "details": { ... } }`
-- `401` `{ "error": "Not authenticated" }` or invalid token variants
-- `500` `{ "error": "Database error", "details": "..." }`
+**Error responses:**
+| Status | Meaning |
+|---|---|
+| `500` | Database error |
 
 ---
 
-## GET `/recipes/get_all`
+### GET `/recipes/get_all`
 
-### Purpose
+Get all recipes including unpublished ones, with their media. No authentication required.
 
-Get all recipes with nested `recipe_media(*)`.
+> ⚠️ Consider restricting this to admin only before going to production.
 
-### Responses
-
-- `200` `{ "data": [ ... ], "message": "Recipes retrieved successfully" }`
-- `500` `{ "error": "Database error", "details": "..." }`
-
----
-
-## GET `/recipes/<recipe_id>`
-
-### Purpose
-
-Get one recipe by id with nested `recipe_media(*)`.
-
-### URL param
-
-- `recipe_id` (int)
-
-### Responses
-
-- `200` `{ "data": { ... }, "message": "Recipe retrieved successfully" }`
-- `404` `{ "error": "Recipe not found" }`
-- `500` `{ "error": "Database error", "details": "..." }`
-
----
-
-## PUT `/recipes/update/<recipe_id>`
-
-### Purpose
-
-Update a recipe if the authenticated user is the author.
-
-### Headers
-
-- `Content-Type: application/json`
-- `Authorization: Bearer <access_token>`
-
-### Request body
-
-Validated by `RecipeUpdateSchema` (fields optional but validated when provided):
-
+**Response `200`:**
 ```json
 {
-  "title": "string",
-  "description": "string",
-  "ingredients": ["string"],
-  "steps": ["string"],
-  "cuisine_type": "string",
-  "difficulty": "easy | medium | hard",
-  "prep_time_minutes": 0,
-  "cook_time_minutes": 0,
-  "servings": 1,
+  "data": [
+    {
+      "id": 1,
+      "title": "Chicken Adobo",
+      "recipe_media": [
+        {
+          "id": 1,
+          "url": "https://...",
+          "media_type": "image",
+          "caption": "Finished dish",
+          "position": 0
+        }
+      ]
+    }
+  ],
+  "message": "Recipes retrieved successfully"
+}
+```
+
+**Error responses:**
+| Status | Meaning |
+|---|---|
+| `500` | Database error |
+
+---
+
+### GET `/recipes/<recipe_id>`
+
+Get a single recipe by ID, including its media.
+
+**URL parameter:**
+| Param | Type | Description |
+|---|---|---|
+| `recipe_id` | int | ID of the recipe |
+
+**Response `200`:**
+```json
+{
+  "data": {
+    "id": 1,
+    "title": "Chicken Adobo",
+    "description": "A classic Filipino braised chicken dish",
+    "ingredients": ["500g chicken", "1/2 cup soy sauce"],
+    "steps": ["Marinate chicken", "Brown chicken", "Simmer for 30 mins"],
+    "cuisine_type": "Filipino",
+    "cook_time_minutes": 30,
+    "servings": 4,
+    "is_published": true,
+    "favorites_count": 12,
+    "author_id": "uuid",
+    "recipe_media": []
+  },
+  "message": "Recipe retrieved successfully"
+}
+```
+
+**Error responses:**
+| Status | Meaning |
+|---|---|
+| `404` | Recipe not found |
+| `500` | Database error |
+
+---
+
+### POST `/recipes/create`
+
+Create a new recipe for the authenticated user.
+
+**Auth Required:** Yes
+
+**Request body:**
+```json
+{
+  "title": "Chicken Adobo",
+  "description": "A classic Filipino braised chicken dish slow-cooked in soy sauce and vinegar.",
+  "ingredients": [
+    "500g chicken thighs",
+    "1/2 cup soy sauce",
+    "1/2 cup white vinegar",
+    "5 cloves garlic, crushed",
+    "2 bay leaves",
+    "1 tsp black peppercorns"
+  ],
+  "steps": [
+    "Marinate chicken in soy sauce, vinegar, garlic, bay leaves and peppercorns for 30 minutes",
+    "Brown the chicken on both sides for about 5 minutes",
+    "Pour in the marinade and bring to a boil",
+    "Lower heat and simmer for 30 minutes until chicken is tender",
+    "Serve over steamed rice"
+  ],
+  "cuisine_type": "Filipino",
+  "cook_time_minutes": 40,
+  "servings": 4,
   "is_published": true
 }
 ```
 
-### Responses
-
-- `200` `{ "data": { ... }, "message": "Recipe updated successfully" }`
-- `401` not authenticated / invalid token
-- `403` `{ "error": "Forbidden" }`
-- `404` `{ "error": "Recipe not found" }`
-- `400` validation failure
-- `500` database error
-
----
-
-## DELETE `/recipes/<recipe_id>`
-
-### Purpose
-
-Delete a recipe (owner only). Also deletes associated media objects.
-
-### Headers
-
-- `Authorization: Bearer <access_token>`
-
-### Responses
-
-- `200` `{ "message": "Recipe deleted successfully" }`
-- `401` not authenticated / invalid token
-- `403` `{ "error": "Forbidden" }`
-- `404` `{ "error": "Recipe not found" }`
-- `500` database error
-
----
-
-## POST `/recipes/<recipe_id>/media`
-
-### Purpose
-
-Upload an image or video file for a recipe (owner only). Saves record in `recipe_media`.
-
-### Headers
-
-- `Authorization: Bearer <access_token>`
-- `Content-Type: multipart/form-data`
-
-### Form-data
-
-- `file` (required)
-- `caption` (optional)
-- `position` (optional, default `0`)
-
-### Constraints
-
-- Image types: `image/jpeg`, `image/png`, `image/webp`, `image/gif` (max `10MB`)
-- Video types: `video/mp4`, `video/quicktime`, `video/webm` (max `100MB`)
-
-### Responses
-
-- `201` `{ "data": { ... }, "message": "Media uploaded successfully" }`
-- `400` `{ "error": "No file provided" }`
-- `401` not authenticated / invalid token
-- `403` `{ "error": "Forbidden" }`
-- `404` `{ "error": "Recipe not found" }`
-- `413` file too large
-- `415` unsupported file type
-- `500` upload failure
-
----
-
-## DELETE `/recipes/<recipe_id>/media/<media_id>`
-
-### Purpose
-
-Delete a specific media item (owner only).
-
-### Headers
-
-- `Authorization: Bearer <access_token>`
-
-### Responses
-
-- `200` `{ "message": "Media deleted successfully" }`
-- `401` not authenticated / invalid token
-- `403` `{ "error": "Forbidden" }`
-- `404` recipe/media not found
-- `500` database error
-
----
-
-## Axios (mobile) examples
-
-```ts
-export async function getPublishedRecipes() {
-  const res = await api.get("/api/recipes/");
-  return res.data;
-}
-
-export async function getRecipe(recipeId: number) {
-  const res = await api.get(`/api/recipes/${recipeId}`);
-  return res.data;
-}
-
-export async function updateRecipe(
-  accessToken: string,
-  recipeId: number,
-  payload: {
-    title?: string;
-    description?: string;
-    ingredients?: string[];
-    steps?: string[];
-    cuisine_type?: string;
-    difficulty?: "easy" | "medium" | "hard";
-    prep_time_minutes?: number;
-    cook_time_minutes?: number;
-    servings?: number;
-    is_published?: boolean;
+**Response `201`:**
+```json
+{
+  "data": {
+    "id": 1,
+    "title": "Chicken Adobo",
+    "author_id": "your-user-uuid",
+    "cuisine_type": "Filipino",
+    "cook_time_minutes": 40,
+    "servings": 4,
+    "is_published": true,
+    "favorites_count": 0,
+    "created_at": "2026-05-12T..."
   },
-) {
-  const res = await api.put(`/api/recipes/update/${recipeId}`, payload, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  return res.data;
-}
-
-export async function deleteRecipe(accessToken: string, recipeId: number) {
-  const res = await api.delete(`/api/recipes/${recipeId}`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  return res.data;
+  "message": "Recipe created successfully"
 }
 ```
 
-### Create recipe
+**Error responses:**
+| Status | Meaning |
+|---|---|
+| `400` | Validation failed — check `details` for which fields failed |
+| `401` | Not authenticated |
+| `500` | Database error |
 
-```ts
-export async function createRecipe(accessToken: string, payload: any) {
-  const res = await api.post("/api/recipes/create", payload, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  return res.data;
+---
+
+### PUT `/recipes/update/<recipe_id>`
+
+Update a recipe. Only the owner can update. Send only the fields you want to change.
+
+**Auth Required:** Yes (owner only)
+
+**URL parameter:**
+| Param | Type | Description |
+|---|---|---|
+| `recipe_id` | int | ID of the recipe to update |
+
+**Request body** (all fields optional):
+```json
+{
+  "title": "Updated Title",
+  "description": "Updated description",
+  "ingredients": ["new ingredient 1", "new ingredient 2"],
+  "steps": ["new step 1", "new step 2"],
+  "cuisine_type": "Japanese",
+  "cook_time_minutes": 25,
+  "servings": 2,
+  "is_published": false
 }
 ```
 
-### Upload media (multipart)
-
-```ts
-export async function uploadRecipeMedia(
-  accessToken: string,
-  recipeId: number,
-  file: { uri: string; name: string; type: string },
-) {
-  const form = new FormData();
-  form.append("file", file as any);
-
-  const res = await api.post(`/api/recipes/${recipeId}/media`, form, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "multipart/form-data",
-    },
-  });
-
-  return res.data;
+**Response `200`:**
+```json
+{
+  "data": { "updated recipe object" },
+  "message": "Recipe updated successfully"
 }
 ```
+
+**Error responses:**
+| Status | Meaning |
+|---|---|
+| `400` | Validation failed |
+| `401` | Not authenticated |
+| `403` | Forbidden — not the recipe owner |
+| `404` | Recipe not found |
+| `500` | Database error |
+
+---
+
+### DELETE `/recipes/<recipe_id>`
+
+Delete a recipe and all its associated media. Only the owner can delete.
+
+**Auth Required:** Yes (owner only)
+
+**URL parameter:**
+| Param | Type | Description |
+|---|---|---|
+| `recipe_id` | int | ID of the recipe to delete |
+
+**Response `200`:**
+```json
+{
+  "message": "Recipe deleted successfully"
+}
+```
+
+**Error responses:**
+| Status | Meaning |
+|---|---|
+| `401` | Not authenticated |
+| `403` | Forbidden — not the recipe owner |
+| `404` | Recipe not found |
+| `500` | Database error |
+
+> Media files are deleted from Supabase Storage before the recipe row is removed.
+
+---
+
+### POST `/recipes/<recipe_id>/media`
+
+Upload an image or video for a recipe. Only the owner can upload media.
+
+**Auth Required:** Yes (owner only)
+
+**Form data** (multipart/form-data):
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `file` | file | ✅ | Image or video file |
+| `caption` | string | ❌ | Optional caption |
+| `position` | int | ❌ | Display order (default `0`) |
+
+**Allowed file types:**
+
+| Type | Formats | Max Size |
+|---|---|---|
+| Image | jpeg, png, webp, gif | 10 MB |
+| Video | mp4, quicktime, webm | 100 MB |
+
+**Response `201`:**
+```json
+{
+  "data": {
+    "id": 1,
+    "recipe_id": 1,
+    "url": "https://your-supabase-url/storage/...",
+    "storage_path": "user-uuid/recipe-id/filename.jpg",
+    "media_type": "image",
+    "caption": "Finished dish",
+    "position": 0
+  },
+  "message": "Media uploaded successfully"
+}
+```
+
+**Error responses:**
+| Status | Meaning |
+|---|---|
+| `400` | No file provided |
+| `401` | Not authenticated |
+| `403` | Forbidden — not the recipe owner |
+| `404` | Recipe not found |
+| `413` | File too large |
+| `415` | Unsupported file type |
+| `500` | Upload failed |
+
+---
+
+### DELETE `/recipes/<recipe_id>/media/<media_id>`
+
+Delete a specific media item from a recipe. Only the owner can delete media.
+
+**Auth Required:** Yes (owner only)
+
+**URL parameters:**
+| Param | Type | Description |
+|---|---|---|
+| `recipe_id` | int | ID of the recipe |
+| `media_id` | int | ID of the media item to delete |
+
+**Response `200`:**
+```json
+{
+  "message": "Media deleted successfully"
+}
+```
+
+**Error responses:**
+| Status | Meaning |
+|---|---|
+| `401` | Not authenticated |
+| `403` | Forbidden — not the recipe owner |
+| `404` | Recipe or media not found |
+| `500` | Database error |
+
+---
+
+## Endpoint Summary
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| `GET` | `/recipes/` | ❌ | Get all published recipes |
+| `GET` | `/recipes/get_all` | ❌ | Get all recipes with media |
+| `GET` | `/recipes/<id>` | ❌ | Get single recipe with media |
+| `POST` | `/recipes/create` | ✅ | Create a new recipe |
+| `PUT` | `/recipes/update/<id>` | ✅ Owner | Update a recipe |
+| `DELETE` | `/recipes/<id>` | ✅ Owner | Delete a recipe and its media |
+| `POST` | `/recipes/<id>/media` | ✅ Owner | Upload image or video |
+| `DELETE` | `/recipes/<id>/media/<media_id>` | ✅ Owner | Delete a media item |
+
+---
+
+## Production Checklist
+
+- [ ] Restrict `GET /recipes/get_all` to admin only
+- [ ] Add pagination to `GET /recipes/` for large datasets
+- [ ] Consider adding search/filter by `cuisine_type` or `cook_time_minutes`
+- [ ] Set up Supabase Storage bucket policies to restrict direct file access

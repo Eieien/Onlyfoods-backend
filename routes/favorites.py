@@ -11,7 +11,7 @@ def save_recipe(recipe_id):
     if err:
         return err
 
-    recipe = supabase.table("recipes").select("id").eq("id", recipe_id).execute()
+    recipe = supabase.table("recipes").select("id, favorites_count").eq("id", recipe_id).execute()
     if not recipe.data:
         return jsonify({"error": "Recipe not found"}), 404
 
@@ -34,16 +34,22 @@ def save_recipe(recipe_id):
         )
         if not res.data:
             return jsonify({"error": "Failed to save recipe"}), 500
-
-        # Increment favorites_count
-        supabase.rpc("increment_favorites", {"recipe_id": recipe_id}).execute()
-
-        return jsonify({
-            "data": res.data[0],
-            "message": "Recipe saved successfully"
-        }), 201
     except Exception as e:
         return jsonify({"error": "Database error", "details": str(e)}), 500
+
+    # Manually increment favorites_count
+    try:
+        current_count = recipe.data[0]["favorites_count"] or 0
+        supabase.table("recipes").update(
+            {"favorites_count": current_count + 1}
+        ).eq("id", recipe_id).execute()
+    except Exception:
+        pass  # Don't fail the request if count update fails
+
+    return jsonify({
+        "data": res.data[0],
+        "message": "Recipe saved successfully"
+    }), 201
 
 
 @favorites_bp.route("/<int:recipe_id>/save", methods=["DELETE"])
@@ -65,13 +71,21 @@ def unsave_recipe(recipe_id):
     try:
         client = get_authenticated_client(access_token)
         client.table("saved_recipes").delete().eq("user_id", user_id).eq("recipe_id", recipe_id).execute()
-
-        # Decrement favorites_count (floor at 0)
-        supabase.rpc("decrement_favorites", {"recipe_id": recipe_id}).execute()
-
-        return jsonify({"message": "Recipe unsaved successfully"}), 200
     except Exception as e:
         return jsonify({"error": "Database error", "details": str(e)}), 500
+
+    # Manually decrement favorites_count, floor at 0
+    try:
+        recipe = supabase.table("recipes").select("favorites_count").eq("id", recipe_id).execute()
+        if recipe.data:
+            current_count = recipe.data[0]["favorites_count"] or 0
+            supabase.table("recipes").update(
+                {"favorites_count": max(current_count - 1, 0)}
+            ).eq("id", recipe_id).execute()
+    except Exception:
+        pass  # Don't fail the request if count update fails
+
+    return jsonify({"message": "Recipe unsaved successfully"}), 200
 
 
 @favorites_bp.route("/me/saved", methods=["GET"])

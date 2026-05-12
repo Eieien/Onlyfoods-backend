@@ -91,6 +91,102 @@ def login():
     except Exception as e:
         return jsonify({"error": str(e)}), 401
 
+@auth_bp.route("/reset-password", methods=["POST"])
+def request_password_reset():
+    """
+    POST /auth/reset-password
+    Sends a password reset email to the user.
+    No authentication required.
+
+    Request Body:
+    {
+        "email": "user@example.com"
+    }
+
+    Response (200):
+    {
+        "message": "Password reset email sent"
+    }
+
+    Error Responses:
+        400 - Email is required
+        500 - Failed to send reset email
+    """
+    data  = request.get_json()
+    email = data.get("email") if data else None
+
+    if not email:
+        return jsonify({"error": "Email is required"}), 400
+
+    try:
+        supabase.auth.reset_password_email(
+            email,
+            options={"redirect_to": "yourapp://reset-password"}  # change to your app's deep link or web URL
+        )
+        # Always return 200 even if email doesn't exist — prevents user enumeration
+        return jsonify({"message": "Password reset email sent"}), 200
+    except Exception as e:
+        return jsonify({"error": "Failed to send reset email", "details": str(e)}), 500
+
+
+
+@auth_bp.route("/reset-password/confirm", methods=["POST"])
+def confirm_password_reset():
+    """
+    POST /auth/reset-password/confirm
+    Updates the user's password after they've clicked the reset link.
+    The user must be authenticated via the reset token from the email link.
+
+    Auth Required: Yes (reset token from email, passed as Bearer token)
+
+    Request Body:
+    {
+        "password":         "newpassword123",
+        "confirm_password": "newpassword123"
+    }
+
+    Response (200):
+    {
+        "message": "Password updated successfully"
+    }
+
+    Error Responses:
+        400 - Missing fields or passwords do not match
+        400 - Password too short
+        401 - Invalid or expired reset token
+        500 - Failed to update password
+    """
+    data = request.get_json()
+
+    if not data:
+        return jsonify({"error": "Request body is required"}), 400
+
+    password         = data.get("password")
+    confirm_password = data.get("confirm_password")
+
+    if not password or not confirm_password:
+        return jsonify({"error": "password and confirm_password are required"}), 400
+
+    if password != confirm_password:
+        return jsonify({"error": "Passwords do not match"}), 400
+
+    if len(password) < 8:
+        return jsonify({"error": "Password must be at least 8 characters"}), 400
+
+    # Get the access token from Authorization header
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return jsonify({"error": "Missing or invalid authorization token"}), 401
+
+    access_token = auth_header.split(" ")[1]
+
+    try:
+        client = get_authenticated_client(access_token)
+        client.auth.update_user({"password": password})
+        return jsonify({"message": "Password updated successfully"}), 200
+    except Exception as e:
+        return jsonify({"error": "Failed to update password", "details": str(e)}), 500
+
 
 @auth_bp.route("/logout", methods=["POST"])
 def logout():
