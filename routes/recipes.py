@@ -21,7 +21,7 @@ def get_all_public_recipes():
     }
     """
     try:
-        res = supabase.table("recipes").select("*").eq("is_published", True).execute()
+        res = supabase.table("recipes").select("*, recipe_media(*)").eq("is_published", True).execute()
         return jsonify({
             "data": res.data,
             "message": "Recipes retrieved successfully"
@@ -46,6 +46,84 @@ def get_all_recipes():
     """
     try:
         res = supabase.table("recipes").select("*, recipe_media(*)").execute()
+        return jsonify({
+            "data": res.data,
+            "message": "Recipes retrieved successfully"
+        }), 200
+    except Exception as e:
+        return jsonify({"error": "Database error", "details": str(e)}), 500
+
+
+# ── GET /recipes/my ──────────────────────────────────────────────────────────
+
+@recipes_bp.route("/my", methods=["GET"])
+def get_my_recipes():
+    """
+    GET /recipes/my
+    Get all recipes belonging to the authenticated user, including media.
+    Returns both published and unpublished recipes.
+
+    Auth Required: Yes
+
+    Response (200):
+    {
+        "data": [recipe objects with media],
+        "message": "Recipes retrieved successfully"
+    }
+
+    Error Responses:
+        401 - Not authenticated
+        500 - Database error
+    """
+    user_id, access_token, err = get_current_user()
+    if err:
+        return err
+
+    try:
+        res = (
+            supabase.table("recipes")
+            .select("*, recipe_media(*)")
+            .eq("author_id", user_id)
+            .execute()
+        )
+        return jsonify({
+            "data": res.data,
+            "message": "Recipes retrieved successfully"
+        }), 200
+    except Exception as e:
+        return jsonify({"error": "Database error", "details": str(e)}), 500
+
+
+# ── GET /recipes/user/<user_id> ───────────────────────────────────────────────
+
+@recipes_bp.route("/user/<user_id>", methods=["GET"])
+def get_recipes_by_user(user_id):
+    """
+    GET /recipes/user/<user_id>
+    Get all published recipes for a specific user (public, no auth required).
+
+    Response (200):
+    {
+        "data": [recipe objects with media],
+        "message": "Recipes retrieved successfully"
+    }
+
+    Error Responses:
+        404 - No published recipes found for this user
+        500 - Database error
+    """
+    try:
+        res = (
+            supabase.table("recipes")
+            .select("*, recipe_media(*)")
+            .eq("author_id", user_id)
+            .eq("is_published", True)
+            .execute()
+        )
+
+        if not res.data:
+            return jsonify({"error": "No published recipes found for this user"}), 404
+
         return jsonify({
             "data": res.data,
             "message": "Recipes retrieved successfully"
