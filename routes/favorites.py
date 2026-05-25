@@ -10,13 +10,14 @@ def save_recipe(recipe_id):
     user_id, access_token, err = get_current_user()
     if err:
         return err
+    client = get_authenticated_client(access_token)
 
-    recipe = supabase.table("recipes").select("id, favorites_count").eq("id", recipe_id).execute()
+    recipe = client.table("recipes").select("id, favorites_count").eq("id", recipe_id).execute()
     if not recipe.data:
         return jsonify({"error": "Recipe not found"}), 404
 
     existing = (
-        supabase.table("saved_recipes")
+        client.table("saved_recipes")
         .select("*")
         .eq("user_id", user_id)
         .eq("recipe_id", recipe_id)
@@ -59,8 +60,10 @@ def unsave_recipe(recipe_id):
     if err:
         return err
 
+    client = get_authenticated_client(access_token) 
+
     existing = (
-        supabase.table("saved_recipes")
+        client.table("saved_recipes")          
         .select("*")
         .eq("user_id", user_id)
         .eq("recipe_id", recipe_id)
@@ -70,14 +73,12 @@ def unsave_recipe(recipe_id):
         return jsonify({"error": "Recipe not in saved list"}), 404
 
     try:
-        client = get_authenticated_client(access_token)
         client.table("saved_recipes").delete().eq("user_id", user_id).eq("recipe_id", recipe_id).execute()
     except Exception as e:
         return jsonify({"error": "Database error", "details": str(e)}), 500
 
-    # Manually decrement favorites_count, floor at 0
+    # Decrement favorites_count, floor at 0
     try:
-        client = get_authenticated_client(access_token)
         recipe = client.table("recipes").select("favorites_count").eq("id", recipe_id).execute()
         if recipe.data:
             current_count = recipe.data[0]["favorites_count"] or 0
@@ -85,7 +86,7 @@ def unsave_recipe(recipe_id):
                 {"favorites_count": max(current_count - 1, 0)}
             ).eq("id", recipe_id).execute()
     except Exception:
-        pass  # Don't fail the request if count update fails
+        pass
 
     return jsonify({"message": "Recipe unsaved successfully"}), 200
 
