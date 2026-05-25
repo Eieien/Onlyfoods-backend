@@ -105,7 +105,7 @@ Authenticate a user with email and password. Returns a bearer token and refresh 
 
 ```ts
 export async function login(email: string, password: string) {
-  const res = await api.post("/api/auth/login", { email, password });
+  const res = await api.post("/auth/login", { email, password });
   return res.data;
 }
 ```

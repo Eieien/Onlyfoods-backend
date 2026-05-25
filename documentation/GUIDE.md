@@ -48,10 +48,10 @@ This repo requirement says “Axios ONLY”; storage library is not Axios, so it
 
 ## 4) Create a reusable Axios instance
 
-Create `services/api.ts`:
+Create `services.ts`:
 
 ```ts
-// services/api.ts
+// services.ts
 import axios from "axios";
 import { getAccessToken } from "./tokenStorage";
 
@@ -134,11 +134,11 @@ src/
 
 ```ts
 // services/authService.ts
-import { api } from "./api";
+import { api } from ".";
 import { setAccessToken, clearAccessToken } from "./tokenStorage";
 
 export async function login(email: string, password: string) {
-  const res = await api.post("/api/auth/login", { email, password });
+  const res = await api.post("/auth/login", { email, password });
   const { access_token } = res.data;
   await setAccessToken(access_token);
   return res.data;
@@ -149,16 +149,16 @@ export async function register(
   password: string,
   username: string,
 ) {
-  return api.post("/api/auth/register", { email, password, username });
+  return api.post("/auth/register", { email, password, username });
 }
 
 export async function me() {
-  return api.get("/api/auth/me");
+  return api.get("/auth/me");
 }
 
 export async function logout() {
   await clearAccessToken();
-  return api.post("/api/auth/logout");
+  return api.post("/auth/logout");
 }
 ```
 

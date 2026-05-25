@@ -2,7 +2,7 @@
 
 All endpoints are mounted under:
 
-- `{{API_BASE_URL}}/api/profiles/...`
+- `{{API_BASE_URL}}/profiles/...`
 
 Authentication (mobile):
 
@@ -151,10 +151,10 @@ The server enforces:
 ### GET profile me
 
 ```ts
-import { api } from "./api";
+import { api } from ".";
 
 export async function getMyProfile(accessToken: string) {
-  const res = await api.get("/api/profiles/me", {
+  const res = await api.get("/profiles/me", {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   return res.data;
@@ -168,7 +168,7 @@ export async function updateMyProfile(
   accessToken: string,
   payload: { name: string; avatar_url?: string },
 ) {
-  const res = await api.put("/api/profiles/me", payload, {
+  const res = await api.put("/profiles/me", payload, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   return res.data;
@@ -178,7 +178,7 @@ export async function updateMyProfile(
 ### Upload avatar (multipart)
 
 ```ts
-import { api } from "./api";
+import { api } from ".";
 import { FormData } from "react-native";
 
 export async function uploadAvatar(
@@ -194,7 +194,7 @@ export async function uploadAvatar(
     type: file.type,
   } as any);
 
-  const res = await api.post("/api/profiles/me/avatar", form, {
+  const res = await api.post("/profiles/me/avatar", form, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "multipart/form-data",
@@ -240,7 +240,7 @@ After this call, discard the stored `access_token` and `refresh_token` on the cl
 
 ```ts
 export async function deactivateAccount(accessToken: string) {
-  const res = await api.patch("/api/profiles/deactivate", null, {
+  const res = await api.patch("/profiles/deactivate", null, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   return res.data;

@@ -2,7 +2,7 @@
 
 All endpoints are mounted under:
 
-- `{{API_BASE_URL}}/api/favorites/...`
+- `{{API_BASE_URL}}/favorites/...`
 
 Auth (mobile):
 
@@ -131,7 +131,7 @@ export async function getSavedRecipes(
   page = 1,
   perPage = 10,
 ) {
-  const res = await api.get("/api/favorites/me/saved", {
+  const res = await api.get("/favorites/me/saved", {
     headers: { Authorization: `Bearer ${accessToken}` },
     params: { page, per_page: perPage },
   });
@@ -139,14 +139,14 @@ export async function getSavedRecipes(
 }
 
 export async function saveRecipe(accessToken: string, recipeId: number) {
-  const res = await api.post(`/api/favorites/${recipeId}/save`, null, {
+  const res = await api.post(`/favorites/${recipeId}/save`, null, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   return res.data;
 }
 
 export async function unsaveRecipe(accessToken: string, recipeId: number) {
-  const res = await api.delete(`/api/favorites/${recipeId}/save`, {
+  const res = await api.delete(`/favorites/${recipeId}/save`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   return res.data;

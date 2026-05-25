@@ -1,6 +1,6 @@
 # API Routes (Flask) — OnlyFoods Backend
 
-> Base URL for mobile clients: `http://<HOST>:5000/api`
+> Base URL for mobile clients: `http://<HOST>:5000`
 >
 > The backend registers Flask blueprints with these URL prefixes:
 >
@@ -9,7 +9,7 @@
 > - `/recipes`
 > - `/favorites`
 >
-> All example paths below are relative to `/api`.
+> All example paths below are relative to ``.
 
 ---
 
@@ -30,24 +30,24 @@ In addition, individual routes return more specific payloads like `{ "error": ".
 
 ---
 
-## Auth routes (`/api/auth`)
+## Auth routes (`/auth`)
 
 See: `documentation/AUTH.md`
 
 ---
 
-## Profiles routes (`/api/profiles`)
+## Profiles routes (`/profiles`)
 
 See: `documentation/PROFILES.md`
 
 ---
 
-## Recipes routes (`/api/recipes`)
+## Recipes routes (`/recipes`)
 
 See: `documentation/RECIPES.md`
 
 ---
 
-## Favorites routes (`/api/favorites`)
+## Favorites routes (`/favorites`)
 
 See: `documentation/FAVORITES.md`
