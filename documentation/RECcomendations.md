@@ -251,7 +251,7 @@ GET /recommendations/similar/0?n=4&user_id=user_123
 |---|---|
 | `500` | Index out of range or model not trained |
 
-### GET `/recommendations/by-ingredients` _(new)_
+### POST `/recommendations/by-ingredients` _(new)_
 
 ### Purpose
 
@@ -439,16 +439,17 @@ Clears the seen recipe history for a user so they can receive fresh recommendati
 
 ## Endpoint Summary
 
-| Method | Endpoint                           | Description                       |
-| ------ | ---------------------------------- | --------------------------------- |
-| `POST` | `/recommendations/train`           | Train model from scratch          |
-| `POST` | `/recommendations/fine-tune`       | Fine-tune on swipe triplets       |
-| `POST` | `/recommendations/recommend`       | Similar recipes to a given recipe |
-| `GET`  | `/recommendations/filter`          | Filter by cuisine / cook time     |
-| `GET`  | `/recommendations/similar/<index>` | Similar to recipe at index        |
-| `POST` | `/recommendations/swipe`           | Record a like or dislike          |
-| `POST` | `/recommendations/personalized`    | Personalized taste-based results  |
-| `POST` | `/recommendations/reset-seen`      | Clear seen history for a user     |
+| Method | Endpoint                           | Description                                  |
+| ------ | ---------------------------------- | -------------------------------------------- |
+| `POST` | `/recommendations/train`           | Train model from scratch                     |
+| `POST` | `/recommendations/fine-tune`       | Fine-tune on swipe triplets                  |
+| `POST` | `/recommendations/recommend`       | Similar recipes to a given recipe            |
+| `GET`  | `/recommendations/filter`          | Filter by cuisine / cook time                |
+| `GET`  | `/recommendations/similar/<index>` | Similar to recipe at index                   |
+| `POST` | `/recommendations/swipe`           | Record a like or dislike                     |
+| `POST` | `/recommendations/personalized`    | Personalized taste-based results             |
+| `POST` | `/recommendations/reset-seen`      | Clear seen history for a user                |
+| `POST` | `/recommendations/by-ingredients`  | Shows recipes that have the same ingredients |
 
 ---
 

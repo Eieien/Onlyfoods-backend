@@ -103,8 +103,9 @@ def get_saved_recipes():
     offset = (page - 1) * per_page
 
     try:
+        client = get_authenticated_client(access_token)  # ← add this
         count_res = (
-            supabase.table("saved_recipes")
+            client.table("saved_recipes")
             .select("*", count="exact")
             .eq("user_id", user_id)
             .execute()
@@ -113,8 +114,8 @@ def get_saved_recipes():
         total_pages = (total + per_page - 1) // per_page
 
         res = (
-            supabase.table("saved_recipes")
-            .select("saved_at, recipes(*)")
+            client.table("saved_recipes")
+            .select("saved_at, recipes(*, recipe_media(*))")
             .eq("user_id", user_id)
             .order("saved_at", desc=True)
             .range(offset, offset + per_page - 1)

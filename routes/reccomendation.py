@@ -224,28 +224,28 @@ def recommend_personalized():
 
 # ── /by-ingredients ──────────────────────────────────────────────────────────
 
-@recommendations_bp.route("/by-ingredients", methods=["GET"])
+# ── /by-ingredients ──────────────────────────────────────────────────────────
+
+@recommendations_bp.route("/by-ingredients", methods=["POST"])
 def recommend_by_ingredients():
     """
+    POST /recommendations/by-ingredients
     Returns a randomized feed of recipes containing ALL of the given ingredients.
-    Recipes may have additional ingredients beyond what was queried.
 
-    Query params:
-        ingredients  - comma-separated list e.g. ?ingredients=chicken,basil
-        n            - number of results (default 10)
-        user_id      - optional, enables seen tracking for fresh feeds
-        diversity    - float 0.0–1.0, how shuffled the feed is (default 0.5)
+    Body:
+    {
+        "ingredients": ["chicken", "basil"],
+        "n": 10,
+        "user_id": "abc123",
+        "diversity": 0.5
+    }
 
-    Example:
-        GET /recommendations/by-ingredients?ingredients=chicken,basil&n=10&user_id=abc
-    
     Response (200):
     {
         "ingredients_queried": ["chicken", "basil"],
         "count": 6,
         "recommendations": [
-            { "recipe": { ... }, "similarity": null },
-            ...
+            { "recipe": { ... }, "similarity": null }
         ]
     }
 
@@ -257,17 +257,20 @@ def recommend_by_ingredients():
     if not recommender.fitted:
         return jsonify({"error": "Model not trained yet"}), 503
 
-    raw_ingredients = request.args.get("ingredients", "")
-    if not raw_ingredients:
+    data = request.get_json() or {}
+
+    ingredients = data.get("ingredients", [])
+    if not ingredients:
         return jsonify({"error": "At least one ingredient is required"}), 400
 
-    ingredients = [i.strip().lower() for i in raw_ingredients.split(",") if i.strip()]
+    # Normalize to lowercase strings
+    ingredients = [i.strip().lower() for i in ingredients if isinstance(i, str) and i.strip()]
     if not ingredients:
         return jsonify({"error": "At least one valid ingredient is required"}), 400
 
-    n         = request.args.get("n", default=10, type=int)
-    user_id   = request.args.get("user_id")
-    diversity = request.args.get("diversity", default=0.5, type=float)
+    n         = data.get("n", 10)
+    user_id   = data.get("user_id")
+    diversity = float(data.get("diversity", 0.5))
     diversity = max(0.0, min(1.0, diversity))  # clamp to 0.0–1.0
 
     try:

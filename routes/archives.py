@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request
-from utils.supabase import supabase, get_authenticated_client
+from supabase_client import supabase, get_authenticated_client
 from .auth import get_current_user
 
 archives_bp = Blueprint("archives", __name__)

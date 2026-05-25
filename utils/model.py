@@ -325,16 +325,11 @@ class RecipeRecommender:
         user_id: str = None,
         diversity: float = 0.5,
     ) -> list[dict]:
-        """
-        Returns recipes that contain ALL of the given ingredients (must-have),
-        scored by how many additional ingredients they share with the query.
-        Results are shuffled with a feed-like diversity so every call feels fresh.
-        """
         if not self.fitted:
             raise RuntimeError("Call fit() first")
 
-        query       = [w.lower() for w in ingredients]
-        seen        = self._seen_store.get(user_id, set()) if user_id else set()
+        query = [w.lower() for w in ingredients]
+        seen  = self._seen_store.get(user_id, set()) if user_id else set()
 
         candidates = []
         for r in self.recipes:
@@ -345,12 +340,19 @@ class RecipeRecommender:
 
             recipe_ingredients = [w.lower() for w in r["ingredients"]]
 
-            # All queried ingredients must be present
-            if not all(ing in recipe_ingredients for ing in query):
+            # Check if ALL queried terms appear anywhere inside any ingredient string
+            # e.g. "chicken" matches "500g chicken breast" or "diced chicken"
+            def ingredient_matches(query_term: str) -> bool:
+                return any(query_term in ing for ing in recipe_ingredients)
+
+            if not all(ingredient_matches(q) for q in query):
                 continue
 
-            # Score = how many extra ingredients match (rewards richer recipes)
-            overlap_score = sum(1 for ing in recipe_ingredients if ing in query)
+            # Score by how many recipe ingredients contain any of the queried terms
+            overlap_score = sum(
+                1 for ing in recipe_ingredients
+                if any(q in ing for q in query)
+            )
 
             candidates.append({
                 "recipe":        r,
@@ -361,10 +363,8 @@ class RecipeRecommender:
         if not candidates:
             return []
 
-        # Sort by overlap score descending so best matches lead
         candidates.sort(key=lambda x: x["overlap_score"], reverse=True)
 
-        # Feed-like shuffle: keep top portion deterministic, randomize the rest
         split    = max(1, int(len(candidates) * (1 - diversity)))
         top_half = candidates[:split]
         rest     = candidates[split:]
@@ -372,7 +372,6 @@ class RecipeRecommender:
 
         results = (top_half + rest)[:n]
 
-        # Strip internal scoring field before returning
         for r in results:
             r.pop("overlap_score")
 

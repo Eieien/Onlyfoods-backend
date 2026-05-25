@@ -315,15 +315,12 @@ def update_recipe(recipe_id):
 def delete_recipe(recipe_id):
     """
     DELETE /recipes/<recipe_id>
-    Delete a recipe and all its media (owner only).
-
+    Soft-delete a recipe by archiving it and marking it inactive (owner only).
     Auth Required: Yes
-
     Response (200):
     {
-        "message": "Recipe deleted successfully"
+        "message": "Recipe archived successfully"
     }
-
     Error Responses:
         401 - Not authenticated
         403 - Forbidden (not the owner)
@@ -341,16 +338,18 @@ def delete_recipe(recipe_id):
         return jsonify({"error": "Forbidden"}), 403
 
     try:
-        # Delete media from storage first before removing the recipe row
-        media = supabase.table("recipe_media").select("storage_path").eq("recipe_id", recipe_id).execute()
-        if media.data:
-            paths = [m["storage_path"] for m in media.data]
-            supabase.storage.from_("recipe-media").remove(paths)
-
         client = get_authenticated_client(access_token)
-        client.table("recipes").delete().eq("id", recipe_id).execute()
 
-        return jsonify({"message": "Recipe deleted successfully"}), 200
+        # Insert into archives table
+        client.table("archives").insert({
+            "recipe_id": recipe_id,
+            "author_id": user_id,
+        }).execute()
+
+        # Mark recipe as inactive instead of deleting
+        client.table("recipes").update({"active": False}).eq("id", recipe_id).execute()
+
+        return jsonify({"message": "Recipe archived successfully"}), 200
     except Exception as e:
         return jsonify({"error": "Database error", "details": str(e)}), 500
 
