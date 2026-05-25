@@ -95,15 +95,37 @@ def recommend():
     diversity = max(0.0, min(1.0, float(data.get("diversity", 0.5))))
 
     # ── 1. Filter-based ──────────────────────────────────────────────────────
-    cuisine_type  = data.get("cuisine_type")
-    max_cook_time = data.get("max_cook_time")
-    ingredients   = [
+    cuisine_types = data.get("cuisine_types", [])
+    if isinstance(cuisine_types, str):          # handle accidental single string
+        cuisine_types = [cuisine_types]
+
+    cook_time_map = {
+        "under_30": (None, 30),
+        "30_to_60": (30,   60),
+        "over_60":  (60,   None),
+    }
+    cook_time_key             = data.get("cook_time")
+    min_cook_time, max_cook_time = cook_time_map.get(cook_time_key, (None, None))
+
+    servings_map = {
+        "1":      (1, 1),
+        "2_to_3": (2, 3),
+        "4_to_5": (4, 5),
+        "6_to_7": (6, 7),
+        "8_plus": (8, None),
+    }
+    servings_key            = data.get("servings")
+    min_servings, max_servings = servings_map.get(servings_key, (None, None))
+
+    ingredients = [
         i.strip().lower()
         for i in data.get("ingredients", [])
         if isinstance(i, str) and i.strip()
     ]
 
-    if cuisine_type or max_cook_time is not None or ingredients:
+    has_filters = bool(cuisine_types or cook_time_key or servings_key or ingredients)
+
+    if has_filters:
         try:
             if ingredients:
                 results = recommender.recommend_by_ingredients(
@@ -111,30 +133,32 @@ def recommend():
                 )
             else:
                 results = recommender.recommend_by_filters(
-                    cuisine_type=cuisine_type, max_cook_time=max_cook_time,
-                    n=n, user_id=user_id,
+                    cuisine_types=cuisine_types,
+                    min_cook_time=min_cook_time,
+                    max_cook_time=max_cook_time,
+                    min_servings=min_servings,
+                    max_servings=max_servings,
+                    n=n,
+                    user_id=user_id,
                 )
             return jsonify({"recommendations": results, "mode": "filter"})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
     # ── 2. Personalized — fetch saved_recipes from Supabase ──────────────────
-    # The model only needs the recipe objects, not the DB rows themselves.
-    # We fetch here on the server so the client never has to send the full list.
     if user_id:
         try:
-            from supabase_client import supabase  # your existing client
+            from supabase_client import supabase
 
             rows = (
                 supabase.table("saved_recipes")
-                .select("recipe:recipes(*)")   # join to get full recipe data
+                .select("recipe:recipes(*)")
                 .eq("user_id", user_id)
                 .execute()
                 .data
             )
             favorite_recipes = [row["recipe"] for row in rows if row.get("recipe")]
         except Exception as e:
-            # Non-fatal — fall through to cold start rather than erroring out
             print(f"[recommend] Could not fetch favorites for {user_id}: {e}")
             favorite_recipes = []
     else:
@@ -175,7 +199,8 @@ def recommend():
     # ── 4. Cold start ─────────────────────────────────────────────────────────
     try:
         results = recommender.recommend_by_filters(
-            cuisine_type=None, max_cook_time=None, n=n, user_id=user_id,
+            cuisine_types=[], min_cook_time=None, max_cook_time=None,
+            min_servings=None, max_servings=None, n=n, user_id=user_id,
         )
         return jsonify({"recommendations": results, "mode": "cold_start"})
     except Exception as e:

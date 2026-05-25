@@ -233,26 +233,38 @@ class RecipeRecommender:
         recipe = self.recipes[recipe_index]
         return self.recommend_by_recipe(recipe, n=n, user_id=user_id)
 
-    # ── Recommend by filters ─────────────────────────────────────────────────
-
     def recommend_by_filters(
         self,
-        cuisine_type: str = None,
+        cuisine_types: list[str] = None,   # was: cuisine_type (single string)
         max_cook_time: int = None,
+        min_cook_time: int = None,         # new
+        min_servings: int = None,          # new
+        max_servings: int = None,          # new
         n: int = 5,
         user_id: str = None,
     ) -> list[dict]:
         seen       = self._seen_store.get(user_id, set()) if user_id else set()
-        candidates = [r for r in self.recipes if r.get("active", True)]   
+        candidates = [r for r in self.recipes if r.get("active", True)]
 
-        if cuisine_type:
+        if cuisine_types:
+            cuisine_types_lower = [c.lower() for c in cuisine_types]
             candidates = [r for r in candidates
-                          if r["cuisine_type"].lower() == cuisine_type.lower()]
-        if max_cook_time:
-            candidates = [r for r in candidates
-                          if r["cook_time_minutes"] <= max_cook_time]
+                        if r["cuisine_type"].lower() in cuisine_types_lower]
 
-        # Exclude seen, sort by favorites descending
+        if min_cook_time is not None:
+            candidates = [r for r in candidates
+                        if r["cook_time_minutes"] >= min_cook_time]
+        if max_cook_time is not None:
+            candidates = [r for r in candidates
+                        if r["cook_time_minutes"] <= max_cook_time]
+
+        if min_servings is not None:
+            candidates = [r for r in candidates
+                        if r.get("servings", 1) >= min_servings]
+        if max_servings is not None:
+            candidates = [r for r in candidates
+                        if r.get("servings", 1) <= max_servings]
+
         candidates = [r for r in candidates if r["title"] not in seen]
         candidates.sort(key=lambda r: r.get("favorites_count", 0), reverse=True)
 
