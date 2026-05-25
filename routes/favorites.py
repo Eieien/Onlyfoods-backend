@@ -39,8 +39,9 @@ def save_recipe(recipe_id):
 
     # Manually increment favorites_count
     try:
+        client = get_authenticated_client(access_token)
         current_count = recipe.data[0]["favorites_count"] or 0
-        supabase.table("recipes").update(
+        client.table("recipes").update(
             {"favorites_count": current_count + 1}
         ).eq("id", recipe_id).execute()
     except Exception:
@@ -76,10 +77,11 @@ def unsave_recipe(recipe_id):
 
     # Manually decrement favorites_count, floor at 0
     try:
-        recipe = supabase.table("recipes").select("favorites_count").eq("id", recipe_id).execute()
+        client = get_authenticated_client(access_token)
+        recipe = client.table("recipes").select("favorites_count").eq("id", recipe_id).execute()
         if recipe.data:
             current_count = recipe.data[0]["favorites_count"] or 0
-            supabase.table("recipes").update(
+            client.table("recipes").update(
                 {"favorites_count": max(current_count - 1, 0)}
             ).eq("id", recipe_id).execute()
     except Exception:
