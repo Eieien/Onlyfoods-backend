@@ -82,211 +82,105 @@ def fine_tune():
         return jsonify({"error": str(e)}), 500
 
 
-# ── /recommend ───────────────────────────────────────────────────────────────
+# routes/recommendations.py
 
-@recommendations_bp.route("/recommend", methods=["POST"])
-def recommend_by_recipe():
-    """
-    Body: { "recipe": <RecipeCreateSchema>, "n": 5, "user_id": "optional" }
-    Returns diverse, non-repeated recommendations similar to the given recipe.
-    Pass user_id to enable seen tracking across calls.
-    """
-    data = request.get_json()
-    if not data or "recipe" not in data:
-        return jsonify({"error": "recipe field required"}), 400
-
-    n       = data.get("n", 5)
-    user_id = data.get("user_id")
-
-    try:
-        results = recommender.recommend_by_recipe(
-            data["recipe"], n=n, user_id=user_id
-        )
-        return jsonify({"recommendations": results})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-# ── /filter ──────────────────────────────────────────────────────────────────
-
-@recommendations_bp.route("/filter", methods=["GET"])
-def recommend_by_filters():
-    """
-    Query params: cuisine_type, max_cook_time, n, user_id
-    Used for cold-start (new users with no swipe history).
-    Excludes already-seen recipes if user_id is passed.
-    """
-    try:
-        results = recommender.recommend_by_filters(
-            cuisine_type  = request.args.get("cuisine_type"),
-            max_cook_time = request.args.get("max_cook_time", type=int),
-            n             = request.args.get("n", default=5, type=int),
-            user_id       = request.args.get("user_id"),
-        )
-        return jsonify({"recommendations": results})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-# ── /similar/<index> ─────────────────────────────────────────────────────────
-
-@recommendations_bp.route("/similar/<int:index>", methods=["GET"])
-def recommend_by_index(index):
-    """
-    Returns recipes similar to the recipe at position `index` in training data.
-    Query params: n, user_id
-    """
-    n       = request.args.get("n", default=5, type=int)
-    user_id = request.args.get("user_id")
-    try:
-        results = recommender.recommend_by_index(index, n=n, user_id=user_id)
-        return jsonify({"recommendations": results})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-# ── /swipe ───────────────────────────────────────────────────────────────────
-
-@recommendations_bp.route("/swipe", methods=["POST"])
-def record_swipe():
-    """
-    Records a swipe for the current user.
-    Body: { "user_id": "...", "recipe": <RecipeCreateSchema>, "direction": "like"|"dislike" }
-    """
-    # Uncomment once auth is wired:
-    # user = get_current_user()
-    # if not user:
-    #     return jsonify({"error": "unauthorized"}), 401
-    # user_id = user["id"]
-
-    data      = request.get_json()
-    user_id   = data.get("user_id", "anon")
-    recipe    = data.get("recipe")
-    direction = data.get("direction")
-
-    if not recipe or direction not in ("like", "dislike"):
-        return jsonify({"error": "recipe and direction ('like'|'dislike') required"}), 400
-
-    store = _swipe_store.setdefault(user_id, {"liked": [], "disliked": []})
-
-    if direction == "like":
-        titles = [r["title"] for r in store["liked"]]
-        if recipe["title"] not in titles:
-            store["liked"].append(recipe)
-    else:
-        if recipe["title"] not in store["disliked"]:
-            store["disliked"].append(recipe["title"])
-
-    return jsonify({"status": "recorded", "direction": direction})
-
-
-# ── /personalized ────────────────────────────────────────────────────────────
-
-@recommendations_bp.route("/personalized", methods=["POST"])
-def recommend_personalized():
-    """
-    Builds a taste centroid from liked recipes using the embedding model,
-    then queries KNN — much more accurate than the old sparse matrix centroid.
-
-    Body (option A — pass recipes directly):
-        { "liked_recipes": [...], "disliked_titles": [...], "n": 5, "user_id": "..." }
-
-    Body (option B — look up from swipe store):
-        { "user_id": "user_123", "n": 5 }
-    """
-    if not recommender.fitted:
-        return jsonify({"error": "model not trained yet"}), 503
-
-    data    = request.get_json() or {}
-    n       = data.get("n", 5)
-    user_id = data.get("user_id")
-
-    # Resolve liked / disliked
-    if user_id and "liked_recipes" not in data:
-        store           = _swipe_store.get(user_id, {"liked": [], "disliked": []})
-        liked_recipes   = store["liked"]
-        disliked_titles = store["disliked"]
-    else:
-        liked_recipes   = data.get("liked_recipes", [])
-        disliked_titles = data.get("disliked_titles", [])
-
-    try:
-        results = recommender.recommend_personalized(
-            liked_recipes   = liked_recipes,
-            disliked_titles = disliked_titles,
-            n               = n,
-            user_id         = user_id,
-        )
-        mode = "cold_start" if not liked_recipes else "personalized"
-        return jsonify({"recommendations": results, "mode": mode})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-# ── /by-ingredients ──────────────────────────────────────────────────────────
-
-# ── /by-ingredients ──────────────────────────────────────────────────────────
-
-@recommendations_bp.route("/by-ingredients", methods=["POST"])
-def recommend_by_ingredients():
-    """
-    POST /recommendations/by-ingredients
-    Returns a randomized feed of recipes containing ALL of the given ingredients.
-
-    Body:
-    {
-        "ingredients": ["chicken", "basil"],
-        "n": 10,
-        "user_id": "abc123",
-        "diversity": 0.5
-    }
-
-    Response (200):
-    {
-        "ingredients_queried": ["chicken", "basil"],
-        "count": 6,
-        "recommendations": [
-            { "recipe": { ... }, "similarity": null }
-        ]
-    }
-
-    Error Responses:
-        400 - No ingredients provided
-        503 - Model not trained yet
-        500 - Server error
-    """
+@recommendations_bp.route("/recommendations", methods=["POST"])
+def recommend():
     if not recommender.fitted:
         return jsonify({"error": "Model not trained yet"}), 503
 
-    data = request.get_json() or {}
-
-    ingredients = data.get("ingredients", [])
-    if not ingredients:
-        return jsonify({"error": "At least one ingredient is required"}), 400
-
-    # Normalize to lowercase strings
-    ingredients = [i.strip().lower() for i in ingredients if isinstance(i, str) and i.strip()]
-    if not ingredients:
-        return jsonify({"error": "At least one valid ingredient is required"}), 400
-
-    n         = data.get("n", 10)
+    data      = request.get_json() or {}
+    n         = data.get("n", 5)
     user_id   = data.get("user_id")
-    diversity = float(data.get("diversity", 0.5))
-    diversity = max(0.0, min(1.0, diversity))  # clamp to 0.0–1.0
+    diversity = max(0.0, min(1.0, float(data.get("diversity", 0.5))))
 
+    # ── 1. Filter-based ──────────────────────────────────────────────────────
+    cuisine_type  = data.get("cuisine_type")
+    max_cook_time = data.get("max_cook_time")
+    ingredients   = [
+        i.strip().lower()
+        for i in data.get("ingredients", [])
+        if isinstance(i, str) and i.strip()
+    ]
+
+    if cuisine_type or max_cook_time is not None or ingredients:
+        try:
+            if ingredients:
+                results = recommender.recommend_by_ingredients(
+                    ingredients=ingredients, n=n, user_id=user_id, diversity=diversity,
+                )
+            else:
+                results = recommender.recommend_by_filters(
+                    cuisine_type=cuisine_type, max_cook_time=max_cook_time,
+                    n=n, user_id=user_id,
+                )
+            return jsonify({"recommendations": results, "mode": "filter"})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    # ── 2. Personalized — fetch saved_recipes from Supabase ──────────────────
+    # The model only needs the recipe objects, not the DB rows themselves.
+    # We fetch here on the server so the client never has to send the full list.
+    if user_id:
+        try:
+            from supabase_client import supabase  # your existing client
+
+            rows = (
+                supabase.table("saved_recipes")
+                .select("recipe:recipes(*)")   # join to get full recipe data
+                .eq("user_id", user_id)
+                .execute()
+                .data
+            )
+            favorite_recipes = [row["recipe"] for row in rows if row.get("recipe")]
+        except Exception as e:
+            # Non-fatal — fall through to cold start rather than erroring out
+            print(f"[recommend] Could not fetch favorites for {user_id}: {e}")
+            favorite_recipes = []
+    else:
+        favorite_recipes = []
+
+    if favorite_recipes:
+        try:
+            results = recommender.recommend_personalized(
+                liked_recipes=favorite_recipes,
+                disliked_titles=[],
+                n=n,
+                user_id=user_id,
+            )
+            return jsonify({"recommendations": results, "mode": "personalized"})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    # ── 3. Anchor-recipe similarity ───────────────────────────────────────────
+    anchor_recipe = data.get("recipe")
+    anchor_index  = data.get("index")
+
+    if anchor_recipe is not None:
+        try:
+            results = recommender.recommend_by_recipe(
+                anchor_recipe, n=n, user_id=user_id
+            )
+            return jsonify({"recommendations": results, "mode": "similarity"})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    if anchor_index is not None:
+        try:
+            results = recommender.recommend_by_index(anchor_index, n=n, user_id=user_id)
+            return jsonify({"recommendations": results, "mode": "similarity"})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    # ── 4. Cold start ─────────────────────────────────────────────────────────
     try:
-        results = recommender.recommend_by_ingredients(
-            ingredients = ingredients,
-            n           = n,
-            user_id     = user_id,
-            diversity   = diversity,
+        results = recommender.recommend_by_filters(
+            cuisine_type=None, max_cook_time=None, n=n, user_id=user_id,
         )
-        return jsonify({
-            "ingredients_queried": ingredients,
-            "count":               len(results),
-            "recommendations":     results,
-        }), 200
+        return jsonify({"recommendations": results, "mode": "cold_start"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 
 # ── /reset-seen ──────────────────────────────────────────────────────────────

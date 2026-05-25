@@ -28,7 +28,7 @@ In your Expo project, define an API base URL.
 
 ```bash
 # .env (example)
-EXPO_PUBLIC_API_BASE_URL=http://YOUR_BACKEND_HOST:5000/api
+EXPO_PUBLIC_API_BASE_URL=http://YOUR_BACKEND_HOST:5000
 ```
 
 Expo convention:
@@ -77,7 +77,7 @@ export const authStorage = {
 ## 4) Reusable Axios instance + interceptors
 
 ```ts
-// services/api.ts
+// services.ts
 import axios from "axios";
 import { authStorage } from "../storage/authStorage";
 
@@ -136,7 +136,7 @@ services/
 
 ```ts
 // Example: public request (no auth required)
-import { api } from "./api";
+import { api } from ".";
 
 export const listProfiles = async () => {
   const res = await api.get("/profiles/");
