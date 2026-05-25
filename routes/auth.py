@@ -57,40 +57,45 @@ def login():
     if session.get("user"):
         return jsonify({"error": "Already logged in, please logout first"}), 400
 
-    data = request.json
-    email = data.get("email", "").strip().lower()
+    data     = request.json
+    email    = data.get("email", "").strip().lower()
     password = data.get("password", "")
 
     if not email or not password:
         return jsonify({"error": "Email and password are required"}), 400
 
     try:
-        res = supabase.auth.sign_in_with_password({
-            "email": email,
-            "password": password
-        })
-
+        res  = supabase.auth.sign_in_with_password({"email": email, "password": password})
         user = res.user
+
+        # Check if profile is active before allowing login
+        profile = supabase.table("profiles").select("is_active").eq("id", user.id).execute()
+        if profile.data and not profile.data[0].get("is_active", True):
+            # Sign them back out of Supabase auth immediately
+            supabase.auth.sign_out()
+            return jsonify({"error": "This account has been deactivated"}), 403
+
         session["user"] = {
-            "id": user.id,
-            "email": user.email,
-            "metadata": user.user_metadata,
-            "access_token": res.session.access_token,   # store token
-            "refresh_token": res.session.refresh_token  # store refresh token
+            "id":            user.id,
+            "email":         user.email,
+            "metadata":      user.user_metadata,
+            "access_token":  res.session.access_token,
+            "refresh_token": res.session.refresh_token
         }
         return jsonify({
             "message": "Login successful",
             "user": {
-                "id": user.id,
-                "email": user.email,
+                "id":       user.id,
+                "email":    user.email,
                 "metadata": user.user_metadata
             },
-            "access_token": res.session.access_token,   # add this
-            "refresh_token": res.session.refresh_token  # add this
+            "access_token":  res.session.access_token,
+            "refresh_token": res.session.refresh_token
         }), 200
+
     except Exception as e:
         return jsonify({"error": str(e)}), 401
-
+    
 @auth_bp.route("/reset-password", methods=["POST"])
 def request_password_reset():
     """

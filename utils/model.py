@@ -107,7 +107,7 @@ class RecipeRecommender:
     # ── Fit ──────────────────────────────────────────────────────────────────
 
     def fit(self, recipes: list[dict]):
-        published = [r for r in recipes if r.get("is_published", True)]
+        published = [r for r in recipes if r.get("is_published", True) and r.get("active", True)]
         if len(published) < 2:
             raise ValueError("Need at least 2 published recipes to fit")
 
@@ -197,14 +197,13 @@ class RecipeRecommender:
         candidates = []
         for dist, idx in zip(distances[0], indices[0]):
             r = self.recipes[idx]
+            if not r.get("active", True):       # ← skip inactive
+                continue
             if r["title"] == recipe.get("title"):
-                continue                        # skip self
+                continue
             if r["title"] in seen:
-                continue                        # skip already seen
-            candidates.append({
-                "recipe":     r,
-                "similarity": round(1 - float(dist), 4),
-            })
+                continue
+            candidates.append({"recipe": r, "similarity": round(1 - float(dist), 4)})
 
         # Diversify: keep top half by similarity, shuffle the rest
         split      = max(1, int(len(candidates) * (1 - diversity)))
@@ -244,7 +243,7 @@ class RecipeRecommender:
         user_id: str = None,
     ) -> list[dict]:
         seen       = self._seen_store.get(user_id, set()) if user_id else set()
-        candidates = self.recipes
+        candidates = [r for r in self.recipes if r.get("active", True)]   
 
         if cuisine_type:
             candidates = [r for r in candidates
@@ -300,6 +299,8 @@ class RecipeRecommender:
         results = []
         for dist, idx in zip(distances[0], indices[0]):
             r = self.recipes[idx]
+            if not r.get("active", True):       # ← skip inactive
+                continue
             if r["title"] in excluded:
                 continue
             results.append({
@@ -308,6 +309,72 @@ class RecipeRecommender:
             })
             if len(results) >= n:
                 break
+
+        if user_id:
+            seen.update(r["recipe"]["title"] for r in results)
+            self._seen_store[user_id] = seen
+
+        return results
+
+    # ── Recommend by ingredients ─────────────────────────────────────────────
+
+    def recommend_by_ingredients(
+        self,
+        ingredients: list[str],
+        n: int = 10,
+        user_id: str = None,
+        diversity: float = 0.5,
+    ) -> list[dict]:
+        """
+        Returns recipes that contain ALL of the given ingredients (must-have),
+        scored by how many additional ingredients they share with the query.
+        Results are shuffled with a feed-like diversity so every call feels fresh.
+        """
+        if not self.fitted:
+            raise RuntimeError("Call fit() first")
+
+        query       = [w.lower() for w in ingredients]
+        seen        = self._seen_store.get(user_id, set()) if user_id else set()
+
+        candidates = []
+        for r in self.recipes:
+            if not r.get("active", True):
+                continue
+            if r["title"] in seen:
+                continue
+
+            recipe_ingredients = [w.lower() for w in r["ingredients"]]
+
+            # All queried ingredients must be present
+            if not all(ing in recipe_ingredients for ing in query):
+                continue
+
+            # Score = how many extra ingredients match (rewards richer recipes)
+            overlap_score = sum(1 for ing in recipe_ingredients if ing in query)
+
+            candidates.append({
+                "recipe":        r,
+                "overlap_score": overlap_score,
+                "similarity":    None,
+            })
+
+        if not candidates:
+            return []
+
+        # Sort by overlap score descending so best matches lead
+        candidates.sort(key=lambda x: x["overlap_score"], reverse=True)
+
+        # Feed-like shuffle: keep top portion deterministic, randomize the rest
+        split    = max(1, int(len(candidates) * (1 - diversity)))
+        top_half = candidates[:split]
+        rest     = candidates[split:]
+        random.shuffle(rest)
+
+        results = (top_half + rest)[:n]
+
+        # Strip internal scoring field before returning
+        for r in results:
+            r.pop("overlap_score")
 
         if user_id:
             seen.update(r["recipe"]["title"] for r in results)

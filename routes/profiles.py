@@ -158,3 +158,42 @@ def upload_avatar():
         }), 200
     except Exception as e:
         return jsonify({"error": "Upload failed", "details": str(e)}), 500
+    
+@profiles_bp.route("/deactivate", methods=["PATCH"])
+def deactivate_account():
+    """
+    PATCH /profiles/deactivate
+    Sets is_active to False, revokes the Supabase session, and clears the server session.
+    Auth Required: Yes
+    Response (200):
+    {
+        "message": "Account deactivated successfully"
+    }
+    Error Responses:
+        401 - Not authenticated
+        404 - Profile not found
+        500 - Database error
+    """
+    user_id, access_token, err = get_current_user()
+    if err:
+        return err
+
+    res = supabase.table("profiles").select("id").eq("id", user_id).execute()
+    if not res.data:
+        return jsonify({"error": "Profile not found"}), 404
+
+    try:
+        client = get_authenticated_client(access_token)
+
+        # Mark profile as inactive
+        client.table("profiles").update({"is_active": False}).eq("id", user_id).execute()
+
+        # Revoke the Supabase session so the bearer token is invalidated
+        client.auth.sign_out()
+
+        # Clear the server-side session
+        session.clear()
+
+        return jsonify({"message": "Account deactivated successfully"}), 200
+    except Exception as e:
+        return jsonify({"error": "Database error", "details": str(e)}), 500

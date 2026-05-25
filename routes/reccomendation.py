@@ -33,26 +33,22 @@ _swipe_store: dict = {}
 
 @recommendations_bp.route("/train", methods=["POST"])
 def train():
-    """
-    Body: { "recipes": [ <RecipeCreateSchema>, ... ] }
-    Retrains the embedding model + KNN from scratch.
-    """
-    # Uncomment once admin auth is wired:
-    # user = get_current_user()
-    # if not user or user.get("role") != "admin":
-    #     return jsonify({"error": "forbidden"}), 403
+    # If you're pulling recipes from Supabase directly instead of receiving them in body:
+    # recipes = supabase.table("recipes").select("*").eq("active", True).eq("is_published", True).execute().data
 
     data = request.get_json()
     if not data or "recipes" not in data:
         return jsonify({"error": "recipes field required"}), 400
 
+    # Filter here as a safety net in case caller sends stale/inactive recipes
+    active_recipes = [r for r in data["recipes"] if r.get("active", True)]
+
     try:
-        recommender.fit(data["recipes"])
+        recommender.fit(active_recipes)
         recommender.save(MODEL_PATH)
-        return jsonify({"status": "ok", "trained_on": len(data["recipes"])})
+        return jsonify({"status": "ok", "trained_on": len(active_recipes)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 # ── /fine-tune ───────────────────────────────────────────────────────────────
 
@@ -223,6 +219,69 @@ def recommend_personalized():
         )
         mode = "cold_start" if not liked_recipes else "personalized"
         return jsonify({"recommendations": results, "mode": mode})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ── /by-ingredients ──────────────────────────────────────────────────────────
+
+@recommendations_bp.route("/by-ingredients", methods=["GET"])
+def recommend_by_ingredients():
+    """
+    Returns a randomized feed of recipes containing ALL of the given ingredients.
+    Recipes may have additional ingredients beyond what was queried.
+
+    Query params:
+        ingredients  - comma-separated list e.g. ?ingredients=chicken,basil
+        n            - number of results (default 10)
+        user_id      - optional, enables seen tracking for fresh feeds
+        diversity    - float 0.0–1.0, how shuffled the feed is (default 0.5)
+
+    Example:
+        GET /recommendations/by-ingredients?ingredients=chicken,basil&n=10&user_id=abc
+    
+    Response (200):
+    {
+        "ingredients_queried": ["chicken", "basil"],
+        "count": 6,
+        "recommendations": [
+            { "recipe": { ... }, "similarity": null },
+            ...
+        ]
+    }
+
+    Error Responses:
+        400 - No ingredients provided
+        503 - Model not trained yet
+        500 - Server error
+    """
+    if not recommender.fitted:
+        return jsonify({"error": "Model not trained yet"}), 503
+
+    raw_ingredients = request.args.get("ingredients", "")
+    if not raw_ingredients:
+        return jsonify({"error": "At least one ingredient is required"}), 400
+
+    ingredients = [i.strip().lower() for i in raw_ingredients.split(",") if i.strip()]
+    if not ingredients:
+        return jsonify({"error": "At least one valid ingredient is required"}), 400
+
+    n         = request.args.get("n", default=10, type=int)
+    user_id   = request.args.get("user_id")
+    diversity = request.args.get("diversity", default=0.5, type=float)
+    diversity = max(0.0, min(1.0, diversity))  # clamp to 0.0–1.0
+
+    try:
+        results = recommender.recommend_by_ingredients(
+            ingredients = ingredients,
+            n           = n,
+            user_id     = user_id,
+            diversity   = diversity,
+        )
+        return jsonify({
+            "ingredients_queried": ingredients,
+            "count":               len(results),
+            "recommendations":     results,
+        }), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

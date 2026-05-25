@@ -7,6 +7,7 @@ The recipes module handles all recipe CRUD operations, media uploads, and public
 **Base URL:** `/recipes`
 
 **Registered in:** `routes/__init__.py`
+
 ```python
 app.register_blueprint(recipes_bp, url_prefix="/recipes")
 ```
@@ -17,17 +18,17 @@ app.register_blueprint(recipes_bp, url_prefix="/recipes")
 
 ### Fields
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `title` | string | ✅ | Recipe name (1–255 chars) |
-| `description` | string | ✅ | Short description (min 1 char) |
-| `ingredients` | string[] | ✅ | Non-empty list of ingredients |
-| `steps` | string[] | ✅ | Cooking steps in order |
-| `cuisine_type` | string | ✅ | e.g. `"Filipino"`, `"Italian"`, `"Japanese"` (1–100 chars) |
-| `cook_time_minutes` | int | ✅ | Cook time in minutes (>= 0) |
-| `servings` | int | ✅ | Number of servings (>= 1) |
-| `is_published` | bool | ❌ | Whether recipe is publicly visible (default: `false`) |
-| `favorites_count` | int | ❌ | Read-only — managed by DB, never sent by client |
+| Field               | Type     | Required | Description                                                |
+| ------------------- | -------- | -------- | ---------------------------------------------------------- |
+| `title`             | string   | ✅       | Recipe name (1–255 chars)                                  |
+| `description`       | string   | ✅       | Short description (min 1 char)                             |
+| `ingredients`       | string[] | ✅       | Non-empty list of ingredients                              |
+| `steps`             | string[] | ✅       | Cooking steps in order                                     |
+| `cuisine_type`      | string   | ✅       | e.g. `"Filipino"`, `"Italian"`, `"Japanese"` (1–100 chars) |
+| `cook_time_minutes` | int      | ✅       | Cook time in minutes (>= 0)                                |
+| `servings`          | int      | ✅       | Number of servings (>= 1)                                  |
+| `is_published`      | bool     | ❌       | Whether recipe is publicly visible (default: `false`)      |
+| `favorites_count`   | int      | ❌       | Read-only — managed by DB, never sent by client            |
 
 > `favorites_count` is `dump_only` — it is returned in responses but ignored on create/update.
 
@@ -42,6 +43,7 @@ app.register_blueprint(recipes_bp, url_prefix="/recipes")
 Get all published recipes. No authentication required.
 
 **Response `200`:**
+
 ```json
 {
   "data": [
@@ -78,6 +80,7 @@ Get all recipes including unpublished ones, with their media. No authentication 
 > ⚠️ Consider restricting this to admin only before going to production.
 
 **Response `200`:**
+
 ```json
 {
   "data": [
@@ -116,6 +119,7 @@ Get a single recipe by ID, including its media.
 | `recipe_id` | int | ID of the recipe |
 
 **Response `200`:**
+
 ```json
 {
   "data": {
@@ -151,6 +155,7 @@ Create a new recipe for the authenticated user.
 **Auth Required:** Yes
 
 **Request body:**
+
 ```json
 {
   "title": "Chicken Adobo",
@@ -178,6 +183,7 @@ Create a new recipe for the authenticated user.
 ```
 
 **Response `201`:**
+
 ```json
 {
   "data": {
@@ -216,6 +222,7 @@ Update a recipe. Only the owner can update. Send only the fields you want to cha
 | `recipe_id` | int | ID of the recipe to update |
 
 **Request body** (all fields optional):
+
 ```json
 {
   "title": "Updated Title",
@@ -230,6 +237,7 @@ Update a recipe. Only the owner can update. Send only the fields you want to cha
 ```
 
 **Response `200`:**
+
 ```json
 {
   "data": { "updated recipe object" },
@@ -248,6 +256,55 @@ Update a recipe. Only the owner can update. Send only the fields you want to cha
 
 ---
 
+### DELETE `/recipes/<recipe_id>` _(updated)_
+
+> No longer hard-deletes the row or removes storage files. Now a soft delete.
+
+### Purpose
+
+Archives a recipe owned by the authenticated user. Inserts a record into the `archives` table and sets `active = false` on the recipe — excluding it from all feeds and recommendations immediately. Media files in storage are preserved.
+
+### URL param
+
+- `recipe_id` (int)
+
+### Headers
+
+- `Authorization: Bearer <access_token>`
+
+### Request body
+
+- None
+
+### Responses
+
+- `200` `{ "message": "Recipe archived successfully" }`
+- `401` not authenticated / invalid token
+- `403` `{ "error": "Forbidden" }` — not the recipe owner
+- `404` `{ "error": "Recipe not found" }`
+- `500` `{ "error": "Database error", "details": "..." }`
+
+### Behavior notes
+
+Runs in this order:
+
+1. Inserts into `archives` — stores `recipe_id`, `author_id`, `archived_at` (auto-timestamped)
+2. Sets `active = false` on the recipe row
+3. Storage files in `recipe-media` are left untouched
+
+### Axios example
+
+```ts
+export async function archiveRecipe(accessToken: string, recipeId: number) {
+  const res = await api.delete(`/api/recipes/${recipeId}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  return res.data;
+}
+```
+
+---
+
 ### DELETE `/recipes/<recipe_id>`
 
 Delete a recipe and all its associated media. Only the owner can delete.
@@ -260,6 +317,7 @@ Delete a recipe and all its associated media. Only the owner can delete.
 | `recipe_id` | int | ID of the recipe to delete |
 
 **Response `200`:**
+
 ```json
 {
   "message": "Recipe deleted successfully"
@@ -293,12 +351,13 @@ Upload an image or video for a recipe. Only the owner can upload media.
 
 **Allowed file types:**
 
-| Type | Formats | Max Size |
-|---|---|---|
-| Image | jpeg, png, webp, gif | 10 MB |
-| Video | mp4, quicktime, webm | 100 MB |
+| Type  | Formats              | Max Size |
+| ----- | -------------------- | -------- |
+| Image | jpeg, png, webp, gif | 10 MB    |
+| Video | mp4, quicktime, webm | 100 MB   |
 
 **Response `201`:**
+
 ```json
 {
   "data": {
@@ -340,6 +399,7 @@ Delete a specific media item from a recipe. Only the owner can delete media.
 | `media_id` | int | ID of the media item to delete |
 
 **Response `200`:**
+
 ```json
 {
   "message": "Media deleted successfully"
@@ -358,16 +418,16 @@ Delete a specific media item from a recipe. Only the owner can delete media.
 
 ## Endpoint Summary
 
-| Method | Endpoint | Auth | Description |
-|---|---|---|---|
-| `GET` | `/recipes/` | ❌ | Get all published recipes |
-| `GET` | `/recipes/get_all` | ❌ | Get all recipes with media |
-| `GET` | `/recipes/<id>` | ❌ | Get single recipe with media |
-| `POST` | `/recipes/create` | ✅ | Create a new recipe |
-| `PUT` | `/recipes/update/<id>` | ✅ Owner | Update a recipe |
-| `DELETE` | `/recipes/<id>` | ✅ Owner | Delete a recipe and its media |
-| `POST` | `/recipes/<id>/media` | ✅ Owner | Upload image or video |
-| `DELETE` | `/recipes/<id>/media/<media_id>` | ✅ Owner | Delete a media item |
+| Method   | Endpoint                         | Auth     | Description                   |
+| -------- | -------------------------------- | -------- | ----------------------------- |
+| `GET`    | `/recipes/`                      | ❌       | Get all published recipes     |
+| `GET`    | `/recipes/get_all`               | ❌       | Get all recipes with media    |
+| `GET`    | `/recipes/<id>`                  | ❌       | Get single recipe with media  |
+| `POST`   | `/recipes/create`                | ✅       | Create a new recipe           |
+| `PUT`    | `/recipes/update/<id>`           | ✅ Owner | Update a recipe               |
+| `DELETE` | `/recipes/<id>`                  | ✅ Owner | Delete a recipe and its media |
+| `POST`   | `/recipes/<id>/media`            | ✅ Owner | Upload image or video         |
+| `DELETE` | `/recipes/<id>/media/<media_id>` | ✅ Owner | Delete a media item           |
 
 ---
 

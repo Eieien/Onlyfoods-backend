@@ -204,3 +204,45 @@ export async function uploadAvatar(
   return res.data;
 }
 ```
+
+## PATCH `/profiles/deactivate` _(new)_
+
+### Purpose
+
+Deactivates the authenticated user's account. Sets `is_active = false`, immediately revokes the Supabase bearer token, and clears the server-side session in one sequence. The account is blocked from logging in again until manually restored.
+
+### Headers
+
+- `Authorization: Bearer <access_token>`
+
+### Request body
+
+- None
+
+### Responses
+
+- `200` `{ "message": "Account deactivated successfully" }`
+- `401` not authenticated / invalid token
+- `404` `{ "error": "Profile not found" }`
+- `500` `{ "error": "Database error", "details": "..." }`
+
+### Behavior notes
+
+Runs in this exact order:
+
+1. Sets `is_active = false` on the `profiles` table
+2. Calls `sign_out()` on the authenticated Supabase client — bearer token invalidated server-side
+3. Calls `session.clear()` — server-side session cookie wiped
+
+After this call, discard the stored `access_token` and `refresh_token` on the client and redirect to login.
+
+### Axios example
+
+```ts
+export async function deactivateAccount(accessToken: string) {
+  const res = await api.patch("/api/profiles/deactivate", null, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  return res.data;
+}
+```
