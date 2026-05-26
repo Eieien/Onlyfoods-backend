@@ -82,9 +82,9 @@ def fine_tune():
         return jsonify({"error": str(e)}), 500
 
 
-# routes/recommendations.py
+# routes.py
 
-@recommendations_bp.route("/recommendations", methods=["POST"])
+@recommendations_bp.route("/", methods=["POST"])
 def recommend():
     if not recommender.fitted:
         return jsonify({"error": "Model not trained yet"}), 503
