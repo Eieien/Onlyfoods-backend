@@ -152,7 +152,7 @@ def recommend():
 
             rows = (
                 supabase.table("saved_recipes")
-                .select("recipe:recipes(*)")
+                .select("recipe:recipes(*, recipe_media(*))")
                 .eq("user_id", user_id)
                 .execute()
                 .data
