@@ -6,7 +6,7 @@ def register_error_handlers(app):
     
     @app.errorhandler(400)
     def bad_request(error):
-        return jsonify({"error": "Bad request"}), 400
+        return jsonify({"error": "Bad request", "details": str(error)}), 400
     
     @app.errorhandler(401)
     def unauthorized(error):

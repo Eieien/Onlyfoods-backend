@@ -12,7 +12,6 @@ Changes in this version:
 
 from flask import Blueprint, jsonify, request
 from utils.model import RecipeRecommender
-from .auth import get_current_user
 import os
 
 recommendations_bp = Blueprint("recommendations", __name__)
@@ -35,19 +34,46 @@ _swipe_store: dict = {}
 def train():
     # If you're pulling recipes from Supabase directly instead of receiving them in body:
     # recipes = supabase.table("recipes").select("*").eq("active", True).eq("is_published", True).execute().data
-
-    data = request.get_json()
-    if not data or "recipes" not in data:
-        return jsonify({"error": "recipes field required"}), 400
-
-    # Filter here as a safety net in case caller sends stale/inactive recipes
-    active_recipes = [r for r in data["recipes"] if r.get("active", True)]
+    from supabase_client import supabase
 
     try:
-        recommender.fit(active_recipes)
-        recommender.save(MODEL_PATH)
-        return jsonify({"status": "ok", "trained_on": len(active_recipes)})
+        rows = (
+            supabase.table("recipes")
+            .select("*, recipe_media(*)")        # ← includes media
+            .eq("active", True)
+            .eq("is_published", True)
+            .execute()
+            .data
+        )
     except Exception as e:
+        print(f"[train] Supabase error: {e}")
+        return jsonify({"error": "Failed to fetch recipes", "details": str(e)}), 500
+
+
+
+    # data = request.get_json()
+    # if not data or "recipes" not in data:
+    #     return jsonify({"error": "recipes field required"}), 400
+
+    if not rows:
+        return jsonify({"error": "No recipes found"}), 400
+
+    # Filter here as a safety net in case caller sends stale/inactive recipes
+    # active_recipes = [r for r in data["recipes"] if r.get("active", True)]
+
+    # try:
+    #     recommender.fit(active_recipes)
+    #     recommender.save(MODEL_PATH)
+    #     return jsonify({"status": "ok", "trained_on": len(active_recipes)})
+    # except Exception as e:
+    #     return jsonify({"error": str(e)}), 500
+
+    try:
+        recommender.fit(rows)
+        recommender.save(MODEL_PATH)
+        return jsonify({"status": "ok", "trained_on": len(rows)})
+    except Exception as e:
+        print(f"[train] fit() error: {e}")
         return jsonify({"error": str(e)}), 500
 
 # ── /fine-tune ───────────────────────────────────────────────────────────────
