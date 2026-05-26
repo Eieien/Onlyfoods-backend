@@ -151,7 +151,12 @@ def recommend():
         if isinstance(i, str) and i.strip()
     ]
 
-    has_filters = bool(cuisine_types or cook_time_key or servings_key or ingredients)
+    has_filters = bool(
+        cuisine_types or 
+        (cook_time_key and cook_time_key != "") or 
+        (servings_key and servings_key != "") or 
+        ingredients
+    )
 
     if has_filters:
         try:
