@@ -222,12 +222,19 @@ def recommend():
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
-    # ── 4. Cold start ─────────────────────────────────────────────────────────
+# ── 4. Cold start ─────────────────────────────────────────────────────────
     try:
         results = recommender.recommend_by_filters(
             cuisine_types=[], min_cook_time=None, max_cook_time=None,
             min_servings=None, max_servings=None, n=n, user_id=user_id,
         )
+        # If nothing returned, seen list is exhausted — reset and try again
+        if not results and user_id:
+            recommender.reset_seen(user_id)
+            results = recommender.recommend_by_filters(
+                cuisine_types=[], min_cook_time=None, max_cook_time=None,
+                min_servings=None, max_servings=None, n=n, user_id=user_id,
+            )
         return jsonify({"recommendations": results, "mode": "cold_start"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
