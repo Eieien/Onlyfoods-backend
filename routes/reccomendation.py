@@ -162,7 +162,7 @@ def recommend():
         try:
             if ingredients:
                 results = recommender.recommend_by_ingredients(
-                    ingredients=ingredients, n=n, user_id=user_id, diversity=diversity,
+                    ingredients=ingredients, n=n, user_id=user_id, diversity=diversity, exclude_user_id=user_id,
                 )
             else:
                 results = recommender.recommend_by_filters(
@@ -173,6 +173,7 @@ def recommend():
                     max_servings=max_servings,
                     n=n,
                     user_id=user_id,
+                    exclude_user_id=user_id,   # ← add to all calls
                 )
             return jsonify({"recommendations": results, "mode": "filter"})
         except Exception as e:
@@ -204,6 +205,7 @@ def recommend():
                 disliked_titles=[],
                 n=n,
                 user_id=user_id,
+                exclude_user_id=user_id
             )
             # If exhausted, reset seen and retry
             if not results and user_id:
@@ -213,6 +215,7 @@ def recommend():
                     disliked_titles=[],
                     n=n,
                     user_id=user_id,
+                    
                 )
             return jsonify({"recommendations": results, "mode": "personalized"})
         except Exception as e:

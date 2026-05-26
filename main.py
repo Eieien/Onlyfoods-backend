@@ -24,7 +24,7 @@ if __name__ == '__main__':
     app.config["JWT_COOKIE_CSRF_PROTECT"] = False # True if deployment
     jwt.init_app(app)
     register_error_handlers(app)
-    app.run(host='0.0.0.0', debug=True)
+    app.run(host='0.0.0.0', debug=True, port=8081)
 
 
 

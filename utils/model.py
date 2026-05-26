@@ -103,7 +103,14 @@ class RecipeRecommender:
                 vec = self.embedding_model(ing, cui, num)
                 vectors.append(vec.squeeze().numpy())
         return np.array(vectors)
-
+    
+    def _filter_candidates(self, recipes, seen, exclude_user_id=None):
+        return [
+            r for r in recipes
+            if r.get("active", True)
+            and r["title"] not in seen
+            and (exclude_user_id is None or r.get("user_id") != exclude_user_id)
+        ]
     # ── Fit ──────────────────────────────────────────────────────────────────
 
     def fit(self, recipes: list[dict]):
@@ -178,6 +185,7 @@ class RecipeRecommender:
         n: int = 5,
         user_id: str = None,
         diversity: float = 0.3,
+        exclude_user_id=None
     ) -> list[dict]:
         """
         Returns n recommendations for a given recipe.
@@ -188,23 +196,20 @@ class RecipeRecommender:
             raise RuntimeError("Call fit() first")
 
         seen = self._seen_store.get(user_id, set()) if user_id else set()
-
-        # Fetch a large pool so we have room to filter + diversify
-        pool_size    = min(len(self.recipes), n * 4)
+        pool_size = min(len(self.recipes), n * 4)
         query_matrix = self._build_features([recipe])
         distances, indices = self.knn.kneighbors(query_matrix, n_neighbors=pool_size)
 
         candidates = []
         for dist, idx in zip(distances[0], indices[0]):
             r = self.recipes[idx]
-            if not r.get("active", True):       # ← skip inactive
-                continue
             if r["title"] == recipe.get("title"):
                 continue
             if r["title"] in seen:
                 continue
+            if exclude_user_id and r.get("user_id") == exclude_user_id:
+                continue
             candidates.append({"recipe": r, "similarity": round(1 - float(dist), 4)})
-
         # Diversify: keep top half by similarity, shuffle the rest
         split      = max(1, int(len(candidates) * (1 - diversity)))
         top_half   = candidates[:split]
@@ -242,9 +247,10 @@ class RecipeRecommender:
         max_servings: int = None,          # new
         n: int = 5,
         user_id: str = None,
+        exclude_user_id=None
     ) -> list[dict]:
         seen       = self._seen_store.get(user_id, set()) if user_id else set()
-        candidates = [r for r in self.recipes if r.get("active", True)]
+        candidates = self._filter_candidates(self.recipes, seen, exclude_user_id)
 
         if cuisine_types:
             cuisine_types_lower = [c.lower() for c in cuisine_types if isinstance(c, str)]
@@ -284,6 +290,7 @@ class RecipeRecommender:
         disliked_titles: list[str] = None,
         n: int = 5,
         user_id: str = None,
+        exclude_user_id=None
     ) -> list[dict]:
         if not self.fitted:
             raise RuntimeError("Call fit() first")
@@ -311,9 +318,11 @@ class RecipeRecommender:
         results = []
         for dist, idx in zip(distances[0], indices[0]):
             r = self.recipes[idx]
-            if not r.get("active", True):       # ← skip inactive
+            if not r.get("active", True):
                 continue
             if r["title"] in excluded:
+                continue
+            if exclude_user_id and r.get("user_id") == exclude_user_id:
                 continue
             results.append({
                 "recipe":     r,
@@ -336,6 +345,7 @@ class RecipeRecommender:
         n: int = 10,
         user_id: str = None,
         diversity: float = 0.5,
+        exclude_user_id=None
     ) -> list[dict]:
         if not self.fitted:
             raise RuntimeError("Call fit() first")
@@ -348,6 +358,8 @@ class RecipeRecommender:
             if not r.get("active", True):
                 continue
             if r["title"] in seen:
+                continue
+            if exclude_user_id and r.get("user_id") == exclude_user_id:
                 continue
 
             recipe_ingredients = [w.lower() for w in r["ingredients"]]
