@@ -247,10 +247,10 @@ class RecipeRecommender:
         candidates = [r for r in self.recipes if r.get("active", True)]
 
         if cuisine_types:
-            cuisine_types_lower = [c.lower() for c in cuisine_types]
+            cuisine_types_lower = [c.lower() for c in cuisine_types if isinstance(c, str)]
             candidates = [r for r in candidates
-                        if r["cuisine_type"].lower() in cuisine_types_lower]
-
+                        if isinstance(r.get("cuisine_type"), str) and 
+                        r["cuisine_type"].lower() in cuisine_types_lower]
         if min_cook_time is not None:
             candidates = [r for r in candidates
                         if r["cook_time_minutes"] >= min_cook_time]

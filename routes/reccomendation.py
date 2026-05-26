@@ -122,8 +122,10 @@ def recommend():
 
     # ── 1. Filter-based ──────────────────────────────────────────────────────
     cuisine_types = data.get("cuisine_types", [])
-    if isinstance(cuisine_types, str):          # handle accidental single string
+    if isinstance(cuisine_types, str):
         cuisine_types = [cuisine_types]
+    if not isinstance(cuisine_types, list):
+        cuisine_types = []
 
     cook_time_map = {
         "under_30": (None, 30),
