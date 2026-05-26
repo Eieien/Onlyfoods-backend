@@ -198,6 +198,15 @@ def recommend():
                 n=n,
                 user_id=user_id,
             )
+            # If exhausted, reset seen and retry
+            if not results and user_id:
+                recommender.reset_seen(user_id)
+                results = recommender.recommend_personalized(
+                    liked_recipes=favorite_recipes,
+                    disliked_titles=[],
+                    n=n,
+                    user_id=user_id,
+                )
             return jsonify({"recommendations": results, "mode": "personalized"})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
