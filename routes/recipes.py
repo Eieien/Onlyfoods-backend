@@ -83,6 +83,7 @@ def get_my_recipes():
         res = (
             supabase.table("recipes")
             .select("*, recipe_media(*)")
+            .eq("active", True)
             .eq("author_id", user_id)
             .execute()
         )
@@ -117,6 +118,7 @@ def get_recipes_by_user(user_id):
             supabase.table("recipes")
             .select("*, recipe_media(*)")
             .eq("author_id", user_id)
+            .eq("active", True)
             .eq("is_published", True)
             .execute()
         )
@@ -151,7 +153,7 @@ def get_recipe(recipe_id):
         500 - Database error
     """
     try:
-        res = supabase.table("recipes").select("*, recipe_media(*)").eq("id", recipe_id).execute()
+        res = supabase.table("recipes").select("*, recipe_media(*)").eq("id", recipe_id).eq("active", True).execute()
 
         if not res.data:
             return jsonify({"error": "Recipe not found"}), 404
